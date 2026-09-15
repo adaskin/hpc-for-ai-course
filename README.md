@@ -270,8 +270,7 @@ Students should arrive with:
 3. A GitHub account – assignments and project code will be managed via
    a course GitHub organisation / classroom.
 
-A detailed `environment-setup.md` will be posted on this repo one week
-before the first lecture.
+
 
 ---
 
