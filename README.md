@@ -1,13 +1,13 @@
 # YZM 513 – High-Performance Programming Techniques for Artificial Intelligence
 
-**Program:** Yapay Zekâ Mühendisliği Tezli Yüksek Lisans (AI Engineering, M.Sc.)
-**Department:** Bilgisayar Mühendisliği Anabilim Dalı Başkanlığı
-**University:** İstanbul Medeniyet Üniversitesi
-**Instructor:** Ammar Daşkın
-**Semester:** Fall 2026 – 2027
-**Format:** Face-to-face, lecture + in-class labs
-**Expected enrolment:** ~10 students  
-*Prepared with Qwen AI*
+**Program:** Yapay Zekâ Mühendisliği Tezli Yüksek Lisans (AI Engineering, M.Sc.)  
+**Department:** Bilgisayar Mühendisliği Anabilim Dalı Başkanlığı  
+**University:** İstanbul Medeniyet Üniversitesi  
+**Instructor:** Ammar Daşkın  
+**Semester:** Fall 2026 – 2027  
+**Format:** Face-to-face, lecture + in-class labs  
+**Expected enrolment:** ~10 students    
+*Prepared with Qwen AI*  
 
 ---
 
