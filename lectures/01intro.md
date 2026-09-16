@@ -104,7 +104,7 @@ expect interactive format, not pure lecturing.
 - **Clock frequency plateaued ~2005** at 3–5 GHz
 - Reason: power dissipation / thermal limits
 
-![50 years of microprocessor trend](img/moores-law.png)
+![50 years of microprocessor trend bg left:42% 90%](img/moores-law.png)
 [github-karlrupp](https://github.com/karlrupp/microprocessor-trend-data)
 **Consequence:** speedup now comes from **parallelism and specialisation**, not faster single cores.
 
@@ -284,7 +284,8 @@ everyone training GPT-4 on their laptop?" → memory, interconnect, scale.
 - Metric: **LINPACK benchmark** (solving dense linear systems).
 - Current #1 (2026): **Frontier** (ORNL) – ~1.2 EFLOP/s sustained.
 
-![bg right:42% 90%](./img/top500_perf_development.png)
+
+![bg left:42% 90%](img/top500_perf_development.png)
 
 **Performance over time** (log scale):
 exponential growth, driven by parallelism.
@@ -348,8 +349,6 @@ print(f"Size: {n}×{n}")
 print(f"Time: {t1-t0:.4f} s")
 print(f"GFLOP/s: {flops / (t1-t0) / 1e9:.0f}")
 ```
-
----
 
 <!-- note: 
 On a typical laptop CPU this prints ~50–100 GFLOP/s. That's your laptop. The RTX 4090 does this 700× faster. The H100 in FP8, 20 000× faster. 
@@ -813,6 +812,8 @@ Three deliberately slow functions:
 - `normalize_rows(matrix)` – nested loop for L2 normalisation
 - `pairwise_distances(A, B)` – triple-nested loop
 - `softmax(logits)` – Python loops for max, exp, divide
+
+---
 
 ### Your task (20 min):
 
