@@ -36,7 +36,7 @@ style: |
 **İstanbul Medeniyet Üniversitesi**
 AI Engineering M.Sc. – Fall 2026
 
-Assoc. Prof. Dr. Ammar Daşkın
+Ammar Daşkın
 
 ---
 
@@ -180,9 +180,8 @@ c = np.arange(12).reshape(3, 4,order='F')
 - **For this course:** C-contiguous is fine. Just know it exists.
 
 <!-- note:
-Brief mention. Students will encounter this in PyTorch when they see
-tensor.contiguous() or tensor.is_contiguous(). Don't spend more than
-2 minutes here. The key insight: memory layout affects cache performance.
+you will encounter this in PyTorch when you see
+tensor.contiguous() or tensor.is_contiguous(). The key insight: memory layout affects cache performance.
 -->
 
 ---
@@ -278,7 +277,6 @@ why this works:
 2. keepdims=True keeps it as (n, 1) for broadcasting.
 3. matrix / norms broadcasts: each row divided by its scalar norm.
 4. All done in compiled C. No Python loop.
-Run the benchmark live.
 -->
 
 ---
@@ -358,9 +356,8 @@ pairwise_distances             1946.91       2.7128       718×
 
 
 <!-- note:
-Run this.
 "Is NumPy always enough? When would you still need something more?"
-Answer: when the operation isn't expressible as a combination of
+when the operation isn't expressible as a combination of
 standard array operations. Custom recurrence, irregular access patterns,
 conditional logic that depends on element values. That's where Numba comes in.
 -->
@@ -703,9 +700,9 @@ scores = np.einsum('bqd,bkd->bqk', Q, K) / np.sqrt(d)
 - PyTorch equivalent: `torch.einsum`.
 
 <!-- note:
-Don't spend too long here. Just show that einsum exists and is
-useful for attention-style operations they'll see in transformers.
-The notation is compact but powerful. They'll encounter it in
+just know einsum exists and is
+useful for attention-style operations you'll see in transformers.
+The notation is compact but powerful. you'll encounter it in
 PyTorch code and papers.
 -->
 
