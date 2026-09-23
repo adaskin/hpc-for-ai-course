@@ -219,6 +219,8 @@ b = np.random.rand(50)         # (50,)
 c = a + b   # b is "stretched" to (1000, 50) – no copy made
 ```
 
+---
+
 **Rules (right to left):**
 1. Align shapes from the right.
 2. Dimensions match if they're equal **or one of them is 1**.
@@ -262,6 +264,7 @@ def normalize_rows(matrix):
     return result
 ```
 
+---
 **After:**
 ```python
 def normalize_rows_numpy(matrix):
@@ -390,6 +393,8 @@ for i in range(n):
 ```
 *(Hard to vectorise if the logic is complex.)*
 
+---
+
 ❌ **Sequential recurrences:**
 ```python
 for t in range(1, T):
@@ -516,6 +521,8 @@ t1 = time.perf_counter()
 print(f"Second call (compiled):        {t1-t0:.4f} s")
 ```
 
+---
+
 Typical output:
 ```text
 First call (with compilation): 0.842 s
@@ -544,6 +551,9 @@ Important  to understand:
 ✅ Tuples, basic indexing: `a[i]`, `a[i, j]`
 ✅ `np.zeros`, `np.ones`, `np.arange`, `np.sqrt`, `np.exp`, ...
 ✅ Functions calling other `@njit` functions
+
+---
+
 
 ## What Numba CANNOT Compile
 
@@ -582,6 +592,8 @@ def pairwise_distances_parallel(A, B):
             D[i, j] = total ** 0.5
     return D
 ```
+
+---
 
 - `prange` = **parallel range**. Numba distributes iterations across CPU cores.
 - Only the **outer loop** is parallelised (the `i` loop).
@@ -723,11 +735,13 @@ For a call like:
 np.einsum('ij,jk->ik', A, B)
 ```
 
+---
+
 the mathematical formula is:
 
-\[
+$$  
 C_{ik} = \sum_{j} A_{ij} B_{jk}
-\]
+$$
 
 Mapping:
 
@@ -738,11 +752,13 @@ Mapping:
 | `->ik` | output indices \(C_{ik}\) |
 | repeated `j` not in output | summation index: \(\sum_j\) |
 
+---
+
 So the rule is:
 
-\[
+$$
 \text{output} = \sum_{\text{indices not in output}} \prod_{\text{inputs}} \text{input}
-\]
+$$
 
 ---
 
@@ -754,9 +770,9 @@ So the rule is:
 np.einsum('ij,jk->ik', A, B)
 ```
 
-\[
+$$ 
 C_{ik} = \sum_j A_{ij} B_{jk}
-\]
+$$
 
 ---
 
@@ -766,9 +782,9 @@ C_{ik} = \sum_j A_{ij} B_{jk}
 np.einsum('i,i->', x, y)
 ```
 
-\[
+$$  
 s = \sum_i x_i y_i
-\]
+$$
 
 ---
 
@@ -778,9 +794,9 @@ s = \sum_i x_i y_i
 np.einsum('i,j->ij', x, y)
 ```
 
-\[
+$$  
 C_{ij} = x_i y_j
-\]
+$$  
 
 ---
 
@@ -790,9 +806,9 @@ C_{ij} = x_i y_j
 np.einsum('ij->ji', A)
 ```
 
-\[
+$$  
 B_{ji} = A_{ij}
-\]
+$$
 
 ---
 
@@ -802,9 +818,9 @@ B_{ji} = A_{ij}
 np.einsum('ii->', A)
 ```
 
-\[
+$$  
 t = \sum_i A_{ii}
-\]
+$$
 
 ---
 
@@ -818,9 +834,9 @@ scores = np.einsum('bqd,bkd->bqk', Q, K) / np.sqrt(d_model)
 
 Mathematically:
 
-\[
+$$  
 S_{bqk} = \sum_d Q_{bqd} K_{bkd}
-\]
+$$ 
 
 Then the attention output:
 
@@ -828,9 +844,9 @@ Then the attention output:
 output = np.einsum('bqk,bkd->bqd', weights, V)
 ```
 
-\[
+$$  
 O_{bqd} = \sum_k W_{bqk} V_{bkd}
-\]
+$$
 
 This is exactly the batched matrix multiply at the heart of transformer attention.
 
@@ -840,20 +856,20 @@ This is exactly the batched matrix multiply at the heart of transformer attentio
 
 The squared Euclidean distance is:
 
-\[
+$$  
 D_{ij}^2 = \sum_k (A_{ik} - B_{jk})^2
-\]
+$$
 
 Expand it:
 
-\[
+$$
 D_{ij}^2 =
 \sum_k A_{ik}^2
 +
 \sum_k B_{jk}^2
 -
 2 \sum_k A_{ik} B_{jk}
-\]
+$$
 
 In `einsum`:
 
@@ -866,46 +882,48 @@ dist_sq = A_sq[:, None] + B_sq[None, :] - 2 * cross
 D = np.sqrt(np.maximum(dist_sq, 0))
 ```
 
+---
+
 So:
 
-\[
+$$
 A\_sq_i = \sum_j A_{ij}^2
-\]
+$$
 
-\[
+$$
 B\_sq_j = \sum_k B_{jk}^2
-\]
+$$
 
-\[
+$$
 cross_{ij} = \sum_k A_{ik} B_{jk}
-\]
+$$
 
-\[
+$$
 D_{ij}^2 = A\_sq_i + B\_sq_j - 2\, cross_{ij}
-\]
+$$
 
 ---
 
 ## Summary
 
 
-\[
+$$
 \texttt{np.einsum('ij,jk->ik', A, B)}
 \quad\equiv\quad
 C_{ik} = \sum_j A_{ij} B_{jk}
-\]
+$$
 
-\[
+$$
 \texttt{np.einsum('bqd,bkd->bqk', Q, K)}
 \quad\equiv\quad
 S_{bqk} = \sum_d Q_{bqd} K_{bkd}
-\]
+$$
 
-\[
+$$
 \texttt{np.einsum('bqk,bkd->bqd', W, V)}
 \quad\equiv\quad
 O_{bqd} = \sum_k W_{bqk} V_{bkd}
-\]
+$$
 
 
 > **Key idea:** repeated index not in output = summation.  
@@ -989,6 +1007,7 @@ a32 = np.random.rand(1000, 1000).astype(np.float32)  # float32: 4 MB
 
 You are given three functions from Week 1 (same ones you profiled).
 
+
 ### Your task:
 
 1. **Vectorise** each function using NumPy.
@@ -996,9 +1015,13 @@ You are given three functions from Week 1 (same ones you profiled).
    - `softmax` → use `np.exp` + broadcasting
    - `pairwise_distances` → use the matmul trick
 
+---
+
 2. **JIT-compile** `pairwise_distances` with Numba:
    - Add `@njit` → benchmark
    - Add `@njit(parallel=True)` + `prange` → benchmark
+
+---
 
 3. **Benchmark all versions** using `timeit` or `time.perf_counter`.
    Fill in this table:
@@ -1017,6 +1040,8 @@ You are given three functions from Week 1 (same ones you profiled).
    - Does it work? Why or why not?
    - *(Hint: `np.exp` is supported. But what about the `max` loop?)*
 
+---
+
 5. **`einsum` for attention:**
    Given `Q, K, V` of shape `(batch, seq_len, d_model)`:
    ```python
@@ -1026,6 +1051,8 @@ You are given three functions from Week 1 (same ones you profiled).
    ```
    Time it vs. a Python-loop implementation.
 
+---
+
 6. **Cache:** Add `@njit(cache=True)` to your Numba functions.
    Run the script twice. Is the second run faster to start?
 
@@ -1034,8 +1061,8 @@ Bonus 4 is a trick question. Numba CAN compile the softmax loop
 (all operations are supported). But NumPy is still faster here because
 np.exp is already optimised with SIMD. The lesson: Numba isn't always
 the answer. Sometimes the "dumb" vectorised version wins.
-Bonus 5 previews attention from transformers. Students who've seen
-attention will recognise this. Those who haven't will see it in their
+Bonus 5 previews attention from transformers. Those who haven't seen
+attention will see it in their
 ML courses.
 -->
 
@@ -1120,8 +1147,3 @@ ML courses.
 ```python
 ```
 
----
-
-
-
----
