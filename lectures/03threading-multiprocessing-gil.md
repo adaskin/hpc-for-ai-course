@@ -127,6 +127,8 @@ From the operation $T = A + B$ where $A, B \in \mathbb{R}^{m \times n}$:
 
 $$t_{ij} = a_{ij} + b_{ij} \quad \forall\; i, j$$
 
+---
+
 ```text
 ┌─────────────────────────────────────────────────────────┐
 │  Each element t[i,j] depends ONLY on a[i,j] and b[i,j] │
@@ -134,6 +136,8 @@ $$t_{ij} = a_{ij} + b_{ij} \quad \forall\; i, j$$
 │  → Perfect data parallelism                             │
 └─────────────────────────────────────────────────────────┘
 ```
+
+---
 
 | Cores | Work per core | Time (relative) |
 |:-----:|:-------------:|:---------------:|
@@ -155,6 +159,8 @@ $$c_{ij} = \sum_{k=1}^{p} a_{ik} \cdot b_{kj}$$
 - Each $c_{ij}$ is **independent** of other elements of $C$.
 - But computing one $c_{ij}$ requires a **reduction** (sum over $k$).
 
+---
+
 ```text
 Row i of A  ×  Column j of B  →  c[i,j]
 
@@ -164,8 +170,9 @@ Row i of A  ×  Column j of B  →  c[i,j]
                                   (but can use SIMD / tree reduction)
 ```
 
+
 > **In AI:** every linear layer, attention score computation (Q@K^T).
-> BLAS libraries parallelise this internally across cores.
+> BLAS libraries parallelize this internally across cores.
 
 ---
 
@@ -176,6 +183,8 @@ Given matrices $A$ and $B$, compute **both**:
 - $C = A \cdot B$ (multiplication)
 
 These are **independent tasks** on the **same data**:
+
+---
 
 ```text
 ┌────────────────────────────────────────────────────┐
@@ -214,6 +223,8 @@ These are **independent tasks** on the **same data**:
 > A problem is **embarrassingly parallel** if it requires minimal effort
 > to split into independent tasks.
 
+---
+
 Examples:
 - Apply `f(x)` to every element of an array → `map(f, arr)`
 - Process each image in a dataset independently
@@ -225,6 +236,8 @@ Examples:
 for (int i = 0; i < N; i++)
     result[i] = func(arr[i]);  // each iteration independent
 ```
+
+---
 
 > **No synchronisation needed.** Each output depends only on its own input.
 > This is the "easy" case. Today we'll also see the "hard" case.
@@ -266,6 +279,8 @@ Any parallel computation follows three steps:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
 ```text
 Data: [████████████████████████████████████████]
        ↓ SPLIT
@@ -275,6 +290,8 @@ Data: [████████████████████████�
        ↓ COMBINE
        [partial₀] [partial₁] [partial₂] [partial₃] → final result
 ```
+
+---
 
 > **Today's task:** compute-heavy transform on 20 million numbers.
 > Embarrassingly parallel: each chunk is independent.
@@ -300,6 +317,8 @@ Data: [████████████████████████�
 
 Every argument you pass to a `ProcessPoolExecutor` worker must be
 **serialised (pickled)** and sent over an OS pipe. The result comes back the same way.
+
+---
 
 ```text
 Parent process                                Child process
@@ -342,6 +361,9 @@ def partial_sum_of_squares(chunk):
 chunks = np.array_split(data, n_workers)     # 20M floats → 160 MB
 partials = list(ex.map(partial_sum_of_squares, chunks))
 ```
+
+---
+
 
 > 🛠 **Run:** `python parallel_sum_with_pickling_overhead.py`
 
@@ -386,9 +408,36 @@ bounds = [(i * SIZE // n, (i+1) * SIZE // n) for i in range(n)]
 ex.map(partial_sum, bounds)                 # 8 × ~16 bytes pickled
 ```
 
-> How is `data` visible inside the worker? The child process
-> **inherits the parent's memory** via `fork()` (copy-on-write on Linux).
-> Reading `data[start:end]` touches shared pages — no pickle, no copy.
+---
+
+**Why is `data` visible inside the worker?**
+
+
+```text
+Parent process                          Child process (after fork)
+──────────────                          ───────────────────────────
+Page table A ──┐                        Page table B ──┐
+               │                                        │
+               ▼                                        ▼
+          ┌─────────────────────────────────────────────────┐
+          │         SAME physical memory pages              │
+          │         (marked READ-ONLY by the OS)            │
+          └─────────────────────────────────────────────────┘
+                           │
+                ┌──────────┴──────────┐
+                │                     │
+         read page → free       write page → OS copies
+         (no copy)              that page (COW fault)
+```
+
+---
+
+- `fork()` gives the child a **read-only view** of the same physical pages.
+- Reading `data[s:e]` touches those shared pages → **no copy, no IPC**.
+- If a child *writes*, the OS copies just that page (copy-on-write).
+- Our workers only read → **zero copies ever happen**.
+
+> The data never crosses a process boundary. Only the *addresses* do.
 
 ```text
 Parent memory                  Child memory (fork)
@@ -396,6 +445,13 @@ Parent memory                  Child memory (fork)
 data: [████ 160 MB ████] ──COW─► data: (same physical pages, read-only)
                                   └─ child reads data[s:e] directly
 ```
+
+<!-- note:
+"Why doesn't this pickle 160 MB?" → Because fork() gives the child a
+read-only view of the parent's pages. Reading touches shared pages.
+Writing would trigger a copy — but we never write.
+
+-->
 
 ---
 
@@ -407,6 +463,8 @@ data: [████ 160 MB ████] ──COW─► data: (same physical pa
 | `spawn` | macOS, Windows | Fresh interpreter — **everything pickled** |
 | `forkserver` | (opt-in) | Fork from clean server — safer with threads |
 
+---
+
 ```python
 import multiprocessing as mp
 
@@ -416,41 +474,215 @@ with ProcessPoolExecutor(max_workers=8, mp_context=ctx) as ex:
     partials = list(ex.map(partial_sum, bounds))
 ```
 
+---
+
 > ⚠️ **Portability:** `fork` is Linux-only. On macOS/Windows the demo
 > would fall back to `spawn` and slow down again.
 > Cross-platform fix: use `multiprocessing.shared_memory`.
+> `multiprocessing` uses `fork()` on Linux by default — that's *why*
+> the COW trick works there, and *why* it doesn't on macOS/Windows.
 
 ---
 
-## Rule of Thumb: Three Ways Out
+## Cross-Platform Alternative: `shared_memory`
 
-If a worker argument is bigger than a few kilobytes,
-you have a pickling problem.
-
-| Approach | How it works | When to use |
-|---|---|---|
-| **Pass indices / bounds** | Worker reads inherited or memory-mapped data | Linux, read-only data, `fork` available |
-| **`multiprocessing.shared_memory`** | Explicit shared buffer, both processes map it | Cross-platform, mutable shared state |
-| **Pass filenames** | Each worker loads its own slice from disk | Data already on disk, or too big for RAM |
+On macOS/Windows there's no `fork`. Use an explicit shared buffer:
 
 ```python
-# Pattern 1 — indices (Linux, fastest)
-ex.map(partial_sum, [(s, e), ...])
-
-# Pattern 2 — shared_memory (cross-platform)
 from multiprocessing import shared_memory
-shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
-arr = np.ndarray(data.shape, dtype=data.dtype, buffer=shm.buf)
-arr[:] = data
-ex.map(partial_sum, [(shm.name, s, e), ...])
 
-# Pattern 3 — filenames (robust)
-ex.map(load_and_process, ["chunk_0.npy", "chunk_1.npy", ...])
+# Parent: create + populate (one copy)
+shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
+shared_arr = np.ndarray(data.shape, dtype=data.dtype, buffer=shm.buf)
+shared_arr[:] = data
+
+# Worker: attach by NAME (a short string, cheap to pickle)
+def worker(args):
+    name, s, e = args
+    existing = shared_memory.SharedMemory(name=name)
+    arr = np.ndarray((SIZE,), dtype=np.float64, buffer=existing.buf)
+    result = float(np.sum(transform(arr[s:e])))
+    existing.close()
+    return result
+
+# After all workers: cleanup
+shm.close()
+shm.unlink()   # ← forget this and the segment leaks
+```
+
+---
+
+> **One upfront copy, then zero per worker.** Works on Linux, macOS, Windows.
+>
+> **You already use this:** `DataLoader(num_workers=N)` spawns worker
+> processes that load data from disk, then returns finished tensors to the
+> main process via `shared_memory` — avoiding a full pickle of each tensor.
+> The pattern below is the same mechanism.
+
+<!-- note:
+IMPORTANT correction to the DataLoader framing:
+DataLoader workers do NOT receive data via shared_memory — they load
+from disk independently. Shared memory is used on the RETURN path:
+workers put finished tensors into a queue, and the tensor *storage*
+is transferred back to the main process via torch.multiprocessing
+shared memory, so the main process doesn't receive a pickled copy.
+
+Cleanup mechanics: shm.unlink() is the most-forgotten call and
+produces a leak that survives process exit. On Linux the segment
+stays under /dev/shm until manually removed or the OS is rebooted.
+
+-->
+
+---
+
+## Choosing a Data-Sharing Strategy
+
+| Strategy | Data copied? | Cross-platform? | When to use |
+|---|:---:|:---:|---|
+| **Pickle arguments** | Every byte, every worker | ✅ | Small args (< few KB) |
+| **Indices + `fork`** | **Zero** (COW reads) | ❌ Linux | Large read-only arrays |
+| **`shared_memory`** | One upfront copy into RAM segment | ✅ | Large arrays, portable IPC |
+| **Pass filenames** | Zero IPC (each worker reads from disk) | ✅ | Data on disk, independent workers |
+| **`np.memmap` / `mmap_mode="r"`** | Zero (OS pages from disk on demand) | ✅ | Data larger than RAM |
+
+> **The principle:** every byte crossing a process boundary costs time. Move the fewest bytes possible. Ideally zero.
+
+<!-- note:
+Two DIFFERENT uses of mmap at the OS level — do NOT conflate them:
+
+1. ANONYMOUS mmap (RAM-based):
+   - Used by `multiprocessing.shared_memory` internally.
+   - Creates a shared RAM segment. No file on disk.
+   - Purpose: IPC between processes without pickling.
+   - The data is IN RAM, shared via page-table mappings.
+
+2. FILE-BACKED mmap (disk-based):
+   - Used by `np.memmap("file.dat", ...)` or `np.load("f.npy", mmap_mode="r")`.
+   - Maps a file into virtual address space.
+   - OS pages in only the pages you actually touch.
+   - Purpose: work with data LARGER than RAM without loading it all.
+   - The data is ON DISK, paged into RAM on demand.
+
+These are the same syscall (mmap) but solve different problems.
+shared_memory = "how do I share RAM between processes?"
+np.memmap = "how do I read a 500 GB file with 16 GB RAM?"
+-->
+
+---
+
+## Two Kinds of mmap: Don't Confuse Them
+
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│  ANONYMOUS mmap (shared_memory)                                     │
+│                                                                     │
+│  Process A ──┐                                                      │
+│              ├──► Shared RAM segment (no file on disk)              │
+│  Process B ──┘    Both processes map the SAME physical pages        │
+│                                                                     │
+│  Use: IPC between workers. Data already in RAM.                     │
+│  Python: multiprocessing.shared_memory.SharedMemory(...)            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+`shared_memory` answers: "How do processes share data already in RAM?"
+
+---
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  FILE-BACKED mmap (np.memmap, mmap_mode="r")                        │
+│                                                                     │
+│  Process ────► Virtual address space                                │
+│                    │                                                │
+│                    ▼ (page fault on access)                         │
+│               OS reads page from DISK into RAM                      │
+│                                                                     │
+│  Use: Data too large for RAM. Only touched pages are loaded.        │
+│  Python: np.memmap("huge.dat", ...) or np.load(..., mmap_mode="r")  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+`np.memmap` answers: "How do I work with data too big for RAM?"
+> Same OS mechanism. Completely different problems.
+
+
+---
+
+## The Code Patterns for the data sharing
+
+```python
+# ──────────────────────────────────────────────────────────────────
+# Pattern 1 — Indices + fork (Linux only, zero copy)
+#   Worker inherits `data` via COW. Only (start, end) is pickled.
+#   Under the hood: fork() copies page tables, marks pages read-only.
+# ──────────────────────────────────────────────────────────────────
+def sum_bounds(bounds):
+    s, e = bounds
+    return float(np.sum(transform(data[s:e])))  # reads inherited pages
+
+ex.map(sum_bounds, [(0, N//4), (N//4, N//2), ...])
+```
+
+---
+
+```python
+# ──────────────────────────────────────────────────────────────────
+# Pattern 2 — shared_memory (cross-platform, one upfront copy)
+#   Uses ANONYMOUS mmap: creates a shared RAM segment.
+#   Worker attaches by NAME; only the name + bounds are pickled.
+# ──────────────────────────────────────────────────────────────────
+shm = shared_memory.SharedMemory(create=True, size=data.nbytes)
+shm_arr = np.ndarray(data.shape, dtype=data.dtype, buffer=shm.buf)
+shm_arr[:] = data                    # one copy into shared RAM segment
+
+def sum_shm(args):
+    name, s, e = args
+    seg = shared_memory.SharedMemory(name=name)   # attach to same RAM
+    arr = np.ndarray((N,), dtype=np.float64, buffer=seg.buf)
+    result = float(np.sum(transform(arr[s:e])))
+    seg.close()
+    return result
+
+try:
+    ex.map(sum_shm, [(shm.name, 0, N//4), ...])
+finally:
+    shm.close()
+    shm.unlink()        # free the OS shared-memory segment
+```
+
+---
+
+```python
+# ──────────────────────────────────────────────────────────────────
+# Pattern 3 — Filenames (cross-platform, disk-based)
+#   Worker reads its own slice from disk. No shared RAM. No IPC.
+#   Uses FILE-BACKED mmap via mmap_mode="r" to avoid loading
+#   the entire chunk into RAM at once.
+# ──────────────────────────────────────────────────────────────────
+def load_and_sum(path):
+    arr = np.load(path, mmap_mode="r")   # file-backed mmap
+    return float(np.sum(transform(arr)))
+
+ex.map(load_and_sum, ["chunk_0.npy", "chunk_1.npy", ...])
+```
+
+---
+
+```python
+# ──────────────────────────────────────────────────────────────────
+# Pattern 4 — np.memmap (single process, disk-based)
+#   Same mechanism as Pattern 3, but no worker pool.
+#   One process works with a file larger than RAM.
+#   Uses FILE-BACKED mmap: OS pages in only what's touched.
+# ──────────────────────────────────────────────────────────────────
+data = np.memmap("huge.dat", dtype=np.float32, mode="r")
+partial = np.sum(transform(data[s:e]))   # only pages in data[s:e]
 ```
 
 > Same principle as Amdahl: **data movement is the serial fraction.**
 > Minimise it — ideally to zero.
-
+> 🛠 **Run:** `python class-examples/week03/four_patterns.py`
+> 
 ---
 
 ## The Compute Task (Not Memory-Bound!)
@@ -486,14 +718,14 @@ This is the same roofline-model reasoning from Week 1.
 
 ```text
 Data size: 20,000,000 elements
-Expected:  6841963.284712
+Expected:  414674.181686
 
-Workers   Time (s)    Speedup     Efficiency
-──────────────────────────────────────────────────
-serial    1.842       1.00×       100%
-2         0.964       1.91×       96%
-4         0.512       3.60×       90%
-8         0.298       6.18×       77%
+Workers   Time (s)    Speedup     Efficiency  
+──────────────────────────────────────────────
+serial    0.828       1.00×       100%        
+2         0.455       1.82×       91%         
+4         0.287       2.89×       72%         
+8         0.224       3.70×       46%         
 ```
 
 > **Observations:**
@@ -520,9 +752,7 @@ From our measurements:
 
 | $N$ | Measured | Amdahl ($P = 0.97$) |
 |:---:|:---:|:---:|
-| 1 | 1.0× | 1.0× |
 | 2 | 1.9× | 1.97× |
-| 4 | 3.6× | 3.77× |
 | 8 | 6.2× | 6.83× |
 | $\infty$ | — | **33×** ceiling |
 
@@ -571,6 +801,9 @@ def cpu_work_python(n):
     return total
 ```
 
+---
+
+
 ```text
 Workers │ Processes  │ Threads    │ Note
 ────────┼────────────┼────────────┼─────────────────────
@@ -593,6 +826,8 @@ def cpu_work_numpy(bounds):
     x = data[start:end]
     return float(np.sum(np.sin(x) * np.cos(x) + x**2))
 ```
+
+---
 
 ```text
 Workers │ Processes  │ Threads    │ Note
@@ -631,6 +866,8 @@ Is the operation releasing the GIL?
         └── Threads DON'T help (GIL serialises).
             └── Use ProcessPoolExecutor instead.
 ```
+
+---
 
 | Operation | GIL held? | Threads parallel? |
 |-----------|:---------:|:-----------------:|
@@ -672,32 +909,25 @@ Expected: 6841963.284712
 > 🛠 **Run:** `class-examples/week03/parallel_sum_racy.py`
 
 ```python
-import threading
-import numpy as np
-
 data = np.random.rand(10_000_000)
 result = 0.0  # ← SHARED global accumulator
 
 def partial_sum(start, end):
     global result
     local = np.sum(data[start:end] ** 2)
-    result += local  # ← RACE CONDITION! Multiple threads write here.
+    # result += local  # ← RACE CONDITION! Multiple threads write here.
+    # The GIL can switch between any of these steps!
+    result = py_add(result, data[i])
 
 threads = []
-n_workers = 8
-chunk = len(data) // n_workers
-for i in range(n_workers):
-    s, e = i * chunk, (i+1) * chunk if i < n_workers-1 else len(data)
-    t = threading.Thread(target=partial_sum, args=(s, e))
+for w in range(N_WORKERS):
+    s = w * CHUNK
+    e = (w + 1) * CHUNK if w < N_WORKERS - 1 else SIZE
+    t = threading.Thread(target=add_chunk, args=(s, e))
     threads.append(t)
     t.start()
 for t in threads:
     t.join()
-
-expected = np.sum(data ** 2)
-print(f"Expected: {expected:.6f}")
-print(f"Got:      {result:.6f}")
-print(f"Correct:  {np.isclose(result, expected)}")
 ```
 
 ---
@@ -716,7 +946,10 @@ $ python parallel_sum_racy.py
 Expected: 3333328.472913
 Got:      2916654.104287
 Correct:  False  ← !!!
+```
 
+---
+```
 $ python parallel_sum_racy.py
 Expected: 3333328.472913
 Got:      3124991.558342
@@ -790,19 +1023,12 @@ Actually:  130  (Thread 1's +50 was LOST)
 > **Next:** How to fix the correctness problem without losing the speed.
 
 
-## Class-examples: `class-examples/week03/parallel_sum.py`
+## Class-examples: 
 
-```python
+`class-examples/week03/four_patterns.py`  
+`class-examples/week03/parallel_sum.py`   
+`class-examples/week03/parallel_sum_racy.py`
 
-```
-
----
-
-## Class-examples: `class-examples/week03/parallel_sum_racy.py`
-
-```python
-
-```
 
 <!-- _class: lead -->
 
@@ -813,7 +1039,7 @@ Actually:  130  (Thread 1's +50 was LOST)
 
 ## The Problem: Shared Mutable State
 
-### C example (from your OS notes):
+### C example:
 
 ```c
 #include <pthread.h>
@@ -835,6 +1061,8 @@ int main() {
     printf("sum = %d\n", sum);  // Expected: 20000000
 }
 ```
+
+---
 
 ```text
 $ ./a.out
@@ -860,6 +1088,8 @@ Machine level:
   Step 2: ADD    register + 1       (compute)
   Step 3: STORE  register → sum     (write back)
 ```
+
+---
 
 **Interleaving that loses an update:**
 
@@ -936,6 +1166,8 @@ expected = g1 + g2
 print(f"Max error: {np.max(np.abs(grad_accumulator - expected)):.6f}")
 # Often non-zero! Some elements have lost updates.
 ```
+
+---
 
 > **In AI:** this is what happens if two backward passes write to `.grad`
 > simultaneously without synchronisation. PyTorch prevents this internally,
@@ -1065,6 +1297,8 @@ for (int i = 0; i < 10000000; i++) {
 }
 ```
 
+---
+
 ### Good: accumulate locally, lock once at the end
 
 ```c
@@ -1079,6 +1313,8 @@ void *countgold(void *param) {
     return NULL;
 }
 ```
+
+---
 
 > **10,000,000× fewer lock operations.** Massive speedup.
 > **Principle:** do work outside the lock; lock only for the shared update.
@@ -1148,6 +1384,8 @@ void *worker(void *arg) {
 }
 ```
 
+---
+
 ### Python:
 
 ```python
@@ -1182,6 +1420,8 @@ def worker(id):
 > A **condition variable** lets a thread **sleep** until another thread
 > signals that a condition is now true.
 
+---
+
 ### Pattern:
 
 ```python
@@ -1202,6 +1442,8 @@ def consumer():
         item = queue.pop(0)
         # process item
 ```
+
+---
 
 ### C (POSIX):
 
@@ -1227,6 +1469,8 @@ pthread_mutex_unlock(&m);
 └──────────┘     └──────────────────────────────┘     └──────────┘
                   blocks if FULL          blocks if EMPTY
 ```
+
+---
 
 ```python
 import queue
@@ -1263,6 +1507,8 @@ void *worker(void *arg) {
     do_phase_2();                    // all start together
 }
 ```
+
+---
 
 ### Python:
 
@@ -1309,6 +1555,8 @@ Thread 2: "I'll release B after I get A"
 → Neither proceeds. 💀
 ```
 
+---
+
 ### C:
 
 ```c
@@ -1339,6 +1587,8 @@ pthread_mutex_lock(&B); 💀    pthread_mutex_lock(&A); 💀
 5 philosophers, 5 chopsticks. Each needs 2 to eat.
 All grab left chopstick simultaneously → DEADLOCK.
 ```
+
+---
 
 ### Solution (Dijkstra): **hierarchical ordering**
 
@@ -1392,6 +1642,8 @@ This applies to GPU locks, file handles, database connections.
 
 > CPython's **Global Interpreter Lock** allows only one thread
 > to execute Python bytecode at a time.
+
+---
 
 This has a surprising side effect:
 
@@ -1482,6 +1734,8 @@ print(f"Actual:   min={arr.min()}, max={arr.max()}")
 # min < 2.0! Some increments were lost.
 ```
 
+---
+
 > When NumPy operates on arrays, it **releases the GIL**
 > (so other threads can run). This means:
 > - Good for parallelism (threads can truly run concurrently).
@@ -1507,6 +1761,8 @@ print(f"Actual:   min={arr.min()}, max={arr.max()}")
 │  time.sleep() / file I/O      │ ❌ Released│ ✅ (no shared state)│
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 > **The GIL is NOT a synchronisation mechanism.**
 > It's a memory-management implementation detail that accidentally
@@ -1554,6 +1810,8 @@ print(f"Actual:   min={arr.min()}, max={arr.max()}")
 - Connection to `DataLoader`, Ray, distributed training
 - **Hands-on lab**
 
+---
+
 **Optional reading (15 min):**
 - Python `threading` docs: https://docs.python.org/3/library/threading.html
 - Python `queue` docs: https://docs.python.org/3/library/queue.html
@@ -1577,41 +1835,18 @@ print(f"Actual:   min={arr.min()}, max={arr.max()}")
 
 ## Class-examples: `class-examples/week03/`
 
-### `race_condition_counter.py`
+`race_condition_counter.py`
 
-```python
+`race_condition_numpy.py`
 
-```
+`partial_sum_parallel.py`
 
-### `race_condition_numpy.py`
+`producer_consumer_queue.py`
 
-```python
+`semaphore_gpu_limit.py`
 
-```
+`barrier_sync.py`
 
-### `partial_sum_parallel.py`
-
-```python
-
-```
-
-### `producer_consumer_queue.py`
-
-```python
-
-```
-
-### `semaphore_gpu_limit.py`
-
-```python
-
-```
-
-### `barrier_sync.py`
-
-```python
-
-```
 
 ---
 
