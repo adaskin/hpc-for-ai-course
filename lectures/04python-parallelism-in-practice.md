@@ -40,8 +40,9 @@ style: |
 
 **İstanbul Medeniyet Üniversitesi**
 AI Engineering M.Sc. – Fall 2026
-
 Ammar Daşkın
+
+[see python doc on concurrency](https://docs.python.org/3/library/concurrency.html)
 
 ---
 
