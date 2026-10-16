@@ -31,9 +31,10 @@ plt.rcParams.update({
 })
 
 REFERENCE = [  # docs_per_task, tasks, map_s, reduce_s  (reference run, 2 cores)
-    (1, 2000, 1.392, 0.651), (10, 200, 0.535, 0.234),
-    (100, 20, 0.286, 0.021), (1000, 2, 0.305, 0.001),
+    (1, 2000, 1.247, 0.578), (10, 200, 0.462, 0.159),
+    (100, 20, 0.272, 0.016), (1000, 2, 0.320, 0.001),
 ]
+REFERENCE_SERIAL, REFERENCE_WORKERS = 0.437, 2
 
 
 def box(ax, x, y, w, h, text="", fc=BLUE_L, ec=BLUE, fs=11, lw=1.5, tc=INK, r=0.12):
@@ -119,33 +120,59 @@ def fig_dfidf_graph():
 
 
 def load_granularity():
+    """-> (rows, serial_s, workers); rows = (docs_per_task, tasks, map_s, reduce_s)."""
     p = HERE / "granularity_results.csv"
     if p.exists():
         with open(p) as f:
-            r = csv.DictReader(f)
-            return [(int(x["docs_per_task"]), int(x["tasks"]), float(x["map_s"]), float(x["reduce_s"])) for x in r]
-    return REFERENCE
+            r = list(csv.DictReader(f))
+        rows = [(int(x["docs_per_task"]), int(x["tasks"]), float(x["map_s"]), float(x["reduce_s"])) for x in r]
+        if "serial_s" in r[0]:
+            return rows, float(r[0]["serial_s"]), int(r[0]["workers"])
+        return rows, REFERENCE_SERIAL, REFERENCE_WORKERS
+    return REFERENCE, REFERENCE_SERIAL, REFERENCE_WORKERS
 
 
 def fig_granularity():
-    rows = load_granularity()
-    fig, ax = plt.subplots(figsize=(6.4, 3.8))
-    xs = range(len(rows))
-    maps = [r[2] for r in rows]; reds = [r[3] for r in rows]
-    ax.bar(xs, maps, color=BLUE, label="map (parallel)", width=0.6)
-    ax.bar(xs, reds, bottom=maps, color=ORANGE, label="reduce (serial)", width=0.6)
-    tot = [m + r for m, r in zip(maps, reds)]
+    """Granularity through Amdahl's lens: where the time goes, and the resulting speedup."""
+    rows, t1, n = load_granularity()
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(9, 3.7), gridspec_kw={"width_ratios": [1.25, 1]})
+    xs = list(range(len(rows)))
+    ideal = t1 / n                                   # compute time if everything were perfect
+    comp = [min(ideal, r[2]) for r in rows]
+    over = [max(r[2] - ideal, 0) for r in rows]      # overhead + communication
+    red = [r[3] for r in rows]                       # serial reduce
+    ax.bar(xs, comp, color=BLUE, width=0.62, label="compute  (T/N)")
+    ax.bar(xs, over, bottom=comp, color=ORANGE, width=0.62, label="overhead + communication")
+    ax.bar(xs, red, bottom=[c + o for c, o in zip(comp, over)], color=GRAY, width=0.62, label="serial reduce")
+    tot = [c + o + r for c, o, r in zip(comp, over, red)]
     for x, t in zip(xs, tot):
-        ax.text(x, t + max(tot) * 0.02, f"{t:.2f} s", ha="center", fontsize=10.5, color=INK)
-    ax.set_xticks(list(xs))
-    ax.set_xticklabels([f"{r[0]}\n({r[1]} tasks)" for r in rows])
-    ax.set_xlabel("documents per task")
-    ax.set_ylabel("seconds")
-    ax.set_ylim(0, max(tot) * 1.15)
-    ax.legend(frameon=False, loc="upper right")
-    for s in ("top", "right"):
-        ax.spines[s].set_visible(False)
-    ax.set_title("Same work, different task size (2 workers)", fontsize=12, color=INK)
+        ax.text(x, t + max(tot) * 0.02, f"{t:.2f} s", ha="center", fontsize=10, color=INK)
+    ax.set_xticks(xs)
+    ax.set_xticklabels([f"{r[0]}\n({r[1]} tasks)" for r in rows], fontsize=9.5)
+    ax.set_xlabel("documents per task", fontsize=10)
+    ax.set_ylabel("seconds", fontsize=10)
+    ax.set_ylim(0, max(tot) * 1.32)
+    ax.legend(frameon=False, loc="upper right", fontsize=9)
+    ax.set_title("Where the time goes", fontsize=11.5, color=INK)
+
+    sp = [t1 / t for t in tot]
+    bx.axhline(n, color=BLUE, ls="--", lw=1.4)
+    bx.text(len(rows) - 0.55, n + 0.06, f"Amdahl ceiling: {n}x", ha="right", fontsize=9.5, color=BLUE)
+    bx.axhline(1, color=GRAY, ls=":", lw=1.4)
+    bx.text(len(rows) - 0.55, 0.88, "no gain: 1x", ha="right", fontsize=9.5, color=GRAY)
+    bx.plot(xs, sp, "-o", color=ORANGE, lw=2, ms=6)
+    for x, v in zip(xs, sp):
+        bx.text(x, v + 0.13, f"{v:.2f}x", ha="center", fontsize=10, color=INK)
+    bx.set_xticks(xs)
+    bx.set_xticklabels([str(r[0]) for r in rows], fontsize=9.5)
+    bx.set_xlabel("documents per task", fontsize=10)
+    bx.set_ylabel("speedup  =  serial time / parallel time", fontsize=10)
+    bx.set_ylim(0, n + 0.5)
+    bx.set_xlim(-0.4, len(rows) - 0.6)
+    bx.set_title("What you get", fontsize=11.5, color=INK)
+    for a_ in (ax, bx):
+        for sd in ("top", "right"):
+            a_.spines[sd].set_visible(False)
     fig.tight_layout()
     return fig
 

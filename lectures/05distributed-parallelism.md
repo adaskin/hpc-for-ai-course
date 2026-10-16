@@ -221,48 +221,67 @@ With communication:
 $$S(N) = \frac{1}{f_{serial} + f_{comm} + \frac{1 - f_{serial} - f_{comm}}{N}}$$
 
 - $f_{serial}$: the reduce step, the narrow waist, the final merge.
-- $f_{comm}$: serialization + transfer time as a fraction of total.
-- If $f_{comm}$ grows with $N$ (more workers → more messages), speedup can **decrease**.
+- $f_{comm}$: task overhead + serialization + transfer, as a fraction of the total.
+- Ceiling: as $N \to \infty$, $S \to \dfrac{1}{f_{serial} + f_{comm}}$. If they sum to 0.1, **no number of workers gives more than 10×**.
+- If $f_{comm}$ **grows** with $N$ (more workers → more messages), speedup can **decrease**.
 
-> This is why 2000 one-document tasks were slower than 20 hundred-document tasks
-> in our granularity sweep: per-task overhead, plus a long serial reduce.
+> Next question: what controls $f_{serial}$ and $f_{comm}$? The **size of a task**.
 
 ---
 
-## Granularity: The Master Dial
+## Granularity: The Dial Behind the f's
 
 > **Granularity** = how much work is in one task.
+> With $D$ documents and $g$ documents per task, there are $D/g$ tasks.
 
-| Too fine | Too coarse |
-|----------|-----------|
-| Overhead dominates | No parallelism |
-| Thousands of tasks to schedule | One slow task idles everyone |
-| Reduce step grows with #partials | May not fit in memory |
+| | Too fine ($g$ small) | Too coarse ($g$ large) |
+|---|---|---|
+| **Tasks** | thousands | fewer than workers |
+| **$f_{comm}$** (cost per task × #tasks) | large | small |
+| **$f_{serial}$** (reduce over all partials) | large | small |
+| **Workers busy?** | yes, but mostly on overhead | no: idle workers, stragglers |
+| **Memory** | fine | a task may not fit |
 
-**The sweet spot:** each task computes for much longer than it costs to create, schedule, serialize, and collect.
+**The sweet spot:** each task computes much longer than it costs to create, schedule, serialize and collect.
 
-> This single concept explains more distributed-systems performance problems
-> than any other. It applies to Dask chunks, Ray tasks, DataLoader batches,
-> GPU kernel launches, and DDP gradient buckets.
+> This one dial explains more distributed performance problems than any other:
+> Dask chunks, Ray tasks, DataLoader batches, GPU kernel launches, DDP gradient buckets.
 
 ---
 
-## Measured: The Granularity Sweep
+## Measured: Granularity Through Amdahl's Lens
 
-![bg right:45% 95%](img/w05-granularity.svg)
+![w:820](img/w05-granularity.svg)
 
-| docs/task | tasks | map (parallel) | reduce (serial) | total |
-|----------:|------:|---------------:|----------------:|------:|
-| 1 | 2000 | 1.39 s | 0.65 s | 2.04 s |
-| 10 | 200 | 0.54 s | 0.23 s | 0.77 s |
-| **100** | **20** | **0.29 s** | **0.02 s** | **0.31 s** |
-| 1000 | 2 | 0.30 s | 0.001 s | 0.31 s |
+- Same work, same 2 workers. Only the **task size** changes.
+- **Left:** the orange and grey parts are $f_{comm}$ and $f_{serial}$. They shrink as tasks grow.
+- **Right:** speedup against the **ceiling of 2×**. Small tasks are *slower than not parallelising at all*.
 
-- 1-doc tasks: **7× slower** than 100-doc tasks.
-- The serial reduce: 0.65 s with 2000 partial results, 0.001 s with 2.
-- Sweet spot here: ~100 docs/task on 2 cores.
+> 📁 `class-examples/week05/01_granularity_sweep.py` (also times the serial version)
 
-> 📁 `class-examples/week05/01_granularity_sweep.py`
+---
+
+## Reading the Numbers With Amdahl
+
+Serial version: **0.44 s**. Ceiling with 2 workers: **2×**.
+
+| docs/task | tasks | total | speedup $S$ | effective $f$ |
+|----------:|------:|------:|------------:|--------------:|
+| 1 | 2000 | 1.82 s | 0.24× | 7.4 |
+| 10 | 200 | 0.62 s | 0.70× | 1.8 |
+| **100** | **20** | **0.29 s** | **1.52×** | **0.32** |
+| 1000 | 2 | 0.32 s | 1.36× | 0.47 |
+
+$f \approx \dfrac{1/S - 1/N}{1 - 1/N}$: the same estimator you use in the lab.
+**$f > 1$ means the overhead costs more than the whole job.**
+
+- Best: ~100 docs/task. 1.5× of the 2× ceiling; the rest is pool start-up and pickling.
+- 1000 docs/task is slightly worse: only 2 tasks, each ships ~12 MB, and no slack if one worker lags *(likely cause; not isolated)*.
+
+<!-- note:
+Ask first: "2000 tasks on 2 workers: faster or slower than one process?" Most students say faster. It is 4x SLOWER.
+f_eff is the lab's estimator applied to each row. Values above 1 are not real fractions: they say overhead exceeds the entire serial job.
+-->
 
 ---
 
@@ -769,10 +788,10 @@ class Predictor:
 
 | docs/task | tasks | ProcessPool (Week 4) | Dask Bag | Ray |
 |----------:|------:|---------------------:|---------:|----:|
-| 1 | 2000 | 2.04 s | ? | ? |
-| 10 | 200 | 0.77 s | ? | ? |
-| **100** | **20** | **0.31 s** | ? | ? |
-| 1000 | 2 | 0.31 s | ? | ? |
+| 1 | 2000 | 1.82 s | ? | ? |
+| 10 | 200 | 0.62 s | ? | ? |
+| **100** | **20** | **0.29 s** | ? | ? |
+| 1000 | 2 | 0.32 s | ? | ? |
 
 > **Predict:** does the sweet spot move with the framework?
 > The bottleneck is the same: per-task overhead + a serial reduce.
@@ -912,7 +931,7 @@ Run on ≥ 5,000 documents (your Project 1 corpus is fine).
 1. Draw the task graph. Width? Critical path? Where's the narrow waist?
 2. What chunk size did you choose? Evidence?
 3. What data moved, roughly how many bytes, and what did it cost?
-4. Estimate serial fraction: $f \approx \frac{1/S - 1/N}{1 - 1/N}$ *(an upper bound: it also contains start-up, pickling and the reduce)*
+4. Estimate the serial fraction as on the sweep slide: $f \approx \frac{1/S - 1/N}{1 - 1/N}$ *(an upper bound: it also contains start-up, pickling and the reduce)*
 
 > **Expect the plateau:** Colab has 2 cores. 4 workers won't beat 2.
 > The plateau is hardware. The gap below 2× is overhead + serial reduce.
