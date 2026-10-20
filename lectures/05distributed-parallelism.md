@@ -1078,6 +1078,12 @@ Each step: **goal → code → what to observe.** Predict before you run.
 
 ---
 
+# Dask
+https://docs.dask.org/en/stable/10-minutes-to-dask.html 
+
+![alt text](img/w05-dask.png)
+https://docs.dask.org/en/stable/_images/dask-overview.svg
+
 ## Dask 1 · Start With a Lazy Value
 
 ```python
@@ -1300,6 +1306,7 @@ cluster.scale(jobs=4)
 ---
 
 ## Ray 1 · Start and Stop
+https://docs.ray.io/en/master/index.html
 
 ```python
 import ray
