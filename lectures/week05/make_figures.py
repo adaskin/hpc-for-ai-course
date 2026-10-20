@@ -308,12 +308,60 @@ def fig_why_partition():
     return fig
 
 
+def fig_dask_cluster():
+    fig, ax = blank((9, 3.9), (0, 18), (0, 7.8))
+    box(ax, 0.2, 2.6, 3.6, 3.2, fc=BLUE_L, ec=BLUE, lw=1.8)
+    ax.text(2.0, 5.1, "your script", ha="center", fontsize=11.5, weight="bold", color=INK)
+    ax.text(2.0, 4.15, "Client(cluster)", ha="center", fontsize=10.5, color=INK, family="DejaVu Sans Mono")
+    ax.text(2.0, 3.2, "submit · map · compute", ha="center", fontsize=9.5, color=GRAY)
+    box(ax, 5.4, 2.6, 4.0, 3.2, fc=ORANGE_L, ec=ORANGE, lw=2)
+    ax.text(7.4, 5.1, "scheduler", ha="center", fontsize=11.5, weight="bold", color=INK)
+    ax.text(7.4, 4.2, "tcp://127.0.0.1:8786", ha="center", fontsize=9.5, color=INK, family="DejaVu Sans Mono")
+    ax.text(7.4, 3.5, "dashboard  :8787", ha="center", fontsize=9.5, color=INK, family="DejaVu Sans Mono")
+    ax.text(7.4, 2.9, "task graph · who runs what", ha="center", fontsize=9, color=GRAY)
+    arrow(ax, 3.8, 4.2, 5.4, 4.2, color=INK, lw=1.6, both=True)
+    ax.text(14.5, 6.85, "workers (processes)", ha="center", fontsize=10.5, color=GRAY)
+    for i, y in enumerate([4.9, 3.1, 1.3]):
+        box(ax, 11.4, y, 6.2, 1.4, fc="white", ec=GRAY, lw=1.5)
+        ax.text(14.5, y + 0.95, f"worker {i+1}" if i < 2 else "worker N", ha="center", fontsize=10.5, color=INK)
+        ax.text(14.5, y + 0.4, "threads_per_worker · memory_limit", ha="center", fontsize=8.8, color=GRAY)
+        arrow(ax, 9.4, 4.2, 11.4, y + 0.7, color=INK, lw=1.3, both=True)
+    ax.text(9.0, 0.5, "LocalCluster starts the scheduler and the workers as processes on this machine",
+            ha="center", fontsize=10, color=GRAY)
+    return fig
+
+
+def fig_ray_cluster():
+    fig, ax = blank((9, 4.0), (0, 18), (0, 8.0))
+    box(ax, 0.2, 2.4, 3.4, 3.4, fc=BLUE_L, ec=BLUE, lw=1.8)
+    ax.text(1.9, 5.0, "your script", ha="center", fontsize=11.5, weight="bold", color=INK)
+    ax.text(1.9, 4.1, "ray.init(\naddress=\"auto\")", ha="center", va="center", fontsize=9.5, color=INK, family="DejaVu Sans Mono")
+    ax.text(1.9, 2.85, "f.remote()", ha="center", fontsize=9.5, color=GRAY, family="DejaVu Sans Mono")
+    box(ax, 4.6, 1.2, 6.2, 5.8, fc="white", ec=ORANGE, lw=2, r=0.2)
+    ax.text(7.7, 6.55, "head node", ha="center", fontsize=11.5, weight="bold", color=INK)
+    box(ax, 4.9, 4.9, 5.6, 1.0, "GCS: cluster state  ·  dashboard :8265", fc=ORANGE_L, ec=ORANGE, fs=9)
+    box(ax, 4.9, 3.7, 5.6, 0.9, "raylet (local scheduler)", fc=BLUE_L, ec=BLUE, fs=9.5)
+    box(ax, 4.9, 2.5, 5.6, 0.9, "object store (shared memory)", fc=GRAY_L, ec=GRAY, fs=9.5)
+    box(ax, 4.9, 1.4, 5.6, 0.8, "worker processes", fc="white", ec=GRAY, fs=9.5)
+    for i, y in enumerate([4.6, 1.6]):
+        box(ax, 12.2, y, 5.6, 2.4, fc="white", ec=GRAY, lw=1.5, r=0.2)
+        ax.text(15.0, y + 1.95, "worker node", ha="center", fontsize=10.5, weight="bold", color=INK)
+        ax.text(15.0, y + 1.2, "raylet · object store", ha="center", fontsize=9.5, color=INK)
+        ax.text(15.0, y + 0.55, "worker processes", ha="center", fontsize=9.5, color=GRAY)
+        arrow(ax, 10.8, 4.1, 12.2, y + 1.2, color=INK, lw=1.3, both=True)
+    arrow(ax, 3.6, 4.1, 4.6, 4.1, color=INK, lw=1.6, both=True)
+    ax.text(9.0, 0.45, "ray.init() on a laptop = a one-node cluster  ·  `ray start` adds more nodes",
+            ha="center", fontsize=10, color=GRAY)
+    return fig
+
+
 FIGS = {
     "w05-memory-models": fig_memory_models, "w05-dfidf-graph": fig_dfidf_graph,
     "w05-granularity": fig_granularity, "w05-cost-ladder": fig_cost_ladder,
     "w05-scheduling": fig_scheduling, "w05-dask-layers": fig_dask_layers,
     "w05-ray-model": fig_ray_model, "w05-stack": fig_stack,
     "w05-why-partition": fig_why_partition,
+    "w05-dask-cluster": fig_dask_cluster, "w05-ray-cluster": fig_ray_cluster,
 }
 
 if __name__ == "__main__":

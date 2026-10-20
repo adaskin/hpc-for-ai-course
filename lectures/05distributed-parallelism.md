@@ -48,27 +48,32 @@ Ammar Daşkın
 
 ---
 
-## The Week in One Sentence
+## The Week in concept
 
-> Every parallel system — threads, MPI, Dask, Ray, GPU kernels, DDP —
-> answers the same four questions.
-> The answers change. The questions don't.
+- Every parallel system — threads, MPI, Dask, Ray, GPU kernels, DDP — answers the same questions. 
+ 
+How do we **split** the work?  
+Who **does** what?  
+What **moves**, and what does it cost?  
+Who **waits** for whom?
 
-**The four questions:**
+> The answers change but questions are similar.
 
-| # | Question | Week 3–4 answer | This week's answer |
-|---|----------|----------------|-------------------|
-| 1 | How do we **split** the work? | Chunk an array / split documents | Partitioning strategies |
-| 2 | Who **does** what? | Thread pool / process pool | Schedulers, work-stealing |
-| 3 | What **moves**, and what does it cost? | Shared memory (free) / pickle (expensive) | Object stores, networks |
-| 4 | Who **waits** for whom? | Locks, barriers, queues | Task graphs, all-reduce |
+---
+
+|Question | Week 3–4 answer | This week's answer |
+|----------|----------------|-------------------|
+| How do we **split** the work? | Chunk an array / split documents | Partitioning strategies |
+| Who **does** what? | Thread pool / process pool | Schedulers, work-stealing |
+| What **moves**, and what does it cost? | Shared memory (free) / pickle (expensive) | Object stores, networks |
+| Who **waits** for whom? | Locks, barriers, queues | Task graphs, all-reduce |
 
 > You already answered these for one machine. Today: the same questions, bigger scale.
 > At cluster scale a fifth appears: **what if a worker dies?**
 
 ---
 
-## Positioning in the Course
+## Where are we in the course...
 
 ```text
 Week 1–2:  One core, made fast     (vectorise, JIT, BLAS)
@@ -104,6 +109,8 @@ From Week 3, you know two fundamental forms:
 - Pipeline: load → preprocess → train → log.
 - Hyperparameter sweep: 8 different experiments.
 
+---
+### In time frame
 ![w:600](img/w05-why-partition.svg)
 
 > At any scale — 2 threads or 200 machines — you must choose
@@ -289,6 +296,23 @@ f_eff is the lab's estimator applied to each row. Values above 1 are not real fr
 
 # Part III
 # Decomposition: How to Cut
+### →  The First Question, Revisited: "How do we split the work?"
+
+---
+
+> **Q1: How do we split the work?**
+> At any scale — 2 threads or 200 machines — you must choose
+> *what* to split and *where* to cut.
+
+We already know two shapes from Week 3:
+
+![bg right:40% 90%](img/w05-why-partition.svg)
+
+- **Data parallelism:** same op, different data
+- **Task parallelism:** different ops, same or different data
+
+Today we make this concrete for distributed systems:
+*which dimension do we cut along?*
 
 ---
 
@@ -301,43 +325,78 @@ f_eff is the lab's estimator applied to each row. Values above 1 are not real fr
 | **Hash** | Hash of a key | Equal keys must meet (joins, groupby) | RAG store by doc ID |
 | **Range** | Value range | Sorted data, range queries | Training shards by index |
 
-> The right cut depends on what the **next operation** needs.
+> **Rule:** match the partition to the *next* operation.
 > If the next op is local to each piece → any cut works.
 > If the next op needs to see all pieces → you'll pay a reduce or shuffle.
 
 ---
 
-## The Shuffle Problem
+## The Right Cut in Code
 
-**Good cut:** documents partitioned by ID, next op is "tokenize each doc."
-→ Each piece is independent. No data moves. Embarrassingly parallel.
+```python
+# Corpus: 20,000 documents → tokenize each one independently
+# ✓ GOOD cut: by document (each piece is independent)
+chunks = [corpus[i:i+1000] for i in range(0, len(corpus), 1000)]
+# 20 chunks, each processed without talking to the others
 
-**Bad cut:** documents partitioned by date, next op is "group by author."
-→ Each author's documents are scattered across all pieces.
-→ Rows must **move** between workers to co-locate.
+# ✗ BAD cut: by token position (pieces must talk to reconstruct docs)
+# Every operation would need cross-chunk coordination
+```
 
-This is a **shuffle**: the most expensive operation in distributed computing.
-
-> **Design principle:** choose your partitioning to match your access pattern.
-> A column mean over row-partitioned data is a cheap **reduce** (each piece sends sum, count).
-> A groupby over the wrong partition is an expensive **shuffle**.
+```python
+# Embedding matrix: 100,000 × 768 → compute row-wise norms
+# ✓ GOOD cut: by row block (each block self-contained)
+Xd = da.from_array(X, chunks=(10_000, 768))
+norms = da.sqrt((Xd ** 2).sum(axis=1)).compute()   # each block is independent
+```
 
 ---
 
-## Task Decomposition: Pipeline vs. Data-Parallel vs. Task-Parallel
+## The Shuffle Problem
 
-From Week 3's matrix examples:
+![bg right:45% 90%](img/w05-cost-ladder.svg)
 
-| Pattern | Structure | Example |
-|---------|-----------|---------|
+**Good cut:** documents by ID → tokenize each doc.
+→ Each piece independent. **No data moves.** Embarrassingly parallel.
+
+**Bad cut:** documents by date → group by author.
+→ Each author's docs scattered across all pieces.
+→ Rows must **move** between workers to co-locate. This is a **shuffle**.
+
+---
+
+> Shuffle is the most expensive operation in distributed computing.
+> Spark spends most of its time shuffling. Avoid it when possible.
+
+**Not a shuffle:** column mean over row-partitioned data.
+Each piece sends `(sum, count)`. One cheap reduce. No rows move.
+
+---
+
+## Task Decomposition: Three Patterns
+
+| Pattern | Structure | AI example |
+|---------|-----------|------------|
 | **Pipeline** | Stage 1 → Stage 2 → Stage 3 | DataLoader: load → augment → transfer |
 | **Data-parallel** | Same op on N chunks | Batch of images through one layer |
 | **Task-parallel** | N different ops simultaneously | Hyperparameter sweep: 8 configs |
 
-Most real AI systems **combine** these:
+Real AI systems **combine** these:
 - DataLoader = pipeline (stages) + data-parallel (multiple workers)
 - DDP = data-parallel (shards) + synchronous barrier (gradient sync)
 - Inference server = task-parallel (requests) + pipeline (prefill → decode)
+
+---
+
+## Q1 Summary
+
+> **How do we split the work?**
+> - Cut along the dimension the *next operation* touches.
+> - If pieces are independent → embarrassingly parallel.
+> - If pieces must meet → you'll pay (reduce is cheap, shuffle is not).
+> - Real systems combine pipeline + data-parallel + task-parallel.
+
+Now we have pieces. Next: **how do they coordinate?**
 
 ---
 
@@ -345,32 +404,66 @@ Most real AI systems **combine** these:
 
 # Part IV
 # Coordination: Task Graphs and Communication
+### → Answers Questions 2, 3, 4
+### "Who does what? What moves? Who waits for whom?"
 
 ---
 
-## The Task Graph: What Depends on What
+## Three Questions, One Answer
 
-- **Node** = a unit of work (a task)
+| Question | What it asks | Today's answer |
+|----------|-------------|----------------|
+| **Q2: Who does what?** | Assignment of tasks to workers | Schedulers (static, queue, work-stealing) |
+| **Q3: What moves?** | Data crossing worker boundaries | Object stores, broadcast, reduce |
+| **Q4: Who waits for whom?** | Dependencies between tasks | Task graphs, barriers, futures |
+
+These three questions are inseparable in practice:
+the graph (Q4) decides what can move in parallel (Q3),
+which decides who is free to take the next task (Q2).
+
+---
+
+## Q4 First: The Task Graph
+
+- **Node** = a task
 - **Edge** = data dependency (output of A feeds input of B)
 - **Width** = max tasks that can run simultaneously
 - **Critical path** = longest dependency chain = minimum possible time
 
-> If width = 1, you have a serial pipeline. No parallelism possible.
-> The **narrow waist** is where width drops to 1. That's where Amdahl bites.
+![w:700](img/w05-dfidf-graph.svg)
+
+> Width 4 at the start and end; width 1 in the middle.
+> 12 tasks, but minimum time = 5 steps (the critical path).
+> The **narrow waist** is where Amdahl bites.
 
 ---
 
-## Our Running Example: Document Frequency → IDF
+## A Tiny Graph in Code
 
-![w:800](img/w05-dfidf-graph.svg)
+```python
+import dask
+from dask import delayed
 
-- **Width 4** at the start (count each chunk) and end (weight each chunk).
-- **Width 1** in the middle (merge all → compute IDF). This is the narrow waist.
-- **Critical path:** count → merge → merge all → IDF → weight = 5 steps.
-- **Total tasks:** 12. But minimum time = 5 steps (not 12/4).
+@delayed
+def count(chunk): ...
+@delayed
+def merge(a, b): ...
 
-> This is the heart of Project 1's TF-IDF search. The same graph appears
-> in Dask (Part VI) and Ray (Part VI), built differently but identical in structure.
+# Build the graph — nothing runs yet
+c1, c2, c3, c4 = [count(i) for i in range(4)]   # width 4
+m1 = merge(c1, c2)                               # width 2
+m2 = merge(c3, c4)
+total = merge(m1, m2)                            # width 1 (narrow waist)
+
+# Inspect before running
+dask.visualize(total, filename="graph.png")
+
+# Now run
+result = total.compute()
+```
+
+> `delayed` records the graph. `compute()` executes it.
+> You can draw the graph, optimise it, inspect it — before any work happens.
 
 ---
 
@@ -383,39 +476,81 @@ Most real AI systems **combine** these:
 | **Cost** | Rigid shape | No global optimisation |
 | **Examples** | Dask collections, `dask.delayed`, Spark | Ray tasks, Dask futures |
 
-> **Connection to PyTorch:** eager mode = dynamic (each op runs immediately).
-> `torch.compile` (Week 13) = captures a static graph from eager code.
-> Same concept, different domain.
+```python
+# Static: graph is fixed before execution
+total = merge(merge(c1, c2), merge(c3, c4))
 
----
-
-## Four Communication Patterns
-
-| Pattern | Meaning | Week 3 analog | AI example |
-|---------|---------|---------------|------------|
-| **Broadcast** | Same data to all workers | — | Send IDF weights to all chunks |
-| **Reduce / All-reduce** | Combine results from all | Barrier + merge | DDP gradient sync (Week 10) |
-| **Shuffle** | Redistribute by key | — | Repartition dataset by length |
-| **Point-to-point** | Send between specific workers | Producer → consumer | Pipeline stages (Week 11) |
-
-> In Week 3, you used locks and queues for coordination.
-> At distributed scale, these four patterns replace them.
-> The **all-reduce** is the most important one for AI (Week 10: DDP).
-
----
-
-## All-Reduce: Reduce, Then Everyone Gets the Result
-
-```text
-worker 0: g0 ─┐                          ┌─► g0+g1+g2+g3
-worker 1: g1 ─┤   reduce (sum)           ├─► g0+g1+g2+g3
-worker 2: g2 ─┤   + broadcast the sum    ├─► g0+g1+g2+g3
-worker 3: g3 ─┘                          └─► g0+g1+g2+g3
+# Dynamic: graph depends on a result
+if ray.get(total) > threshold:             # look at a result...
+    extra = expensive_op.remote(total)     # ...then decide what to run (Ray)
 ```
 
-- **DDP (Week 10):** each GPU computes gradients on its own data shard; all-reduce gives **every** GPU the same summed gradient before the optimiser step.
-- A **ring all-reduce** passes slices around a ring: each worker sends about 2× the data size in total, almost **independent of the number of workers**.
-- It is also a **barrier**: nobody continues until everyone has the result.
+> **PyTorch connection:** eager mode = dynamic. `torch.compile` (Week 13)
+> captures a static graph from eager code. Same concept, different domain.
+
+---
+
+## Q2: Who Does What? (Scheduling)
+
+![bg right:50% 95%](img/w05-scheduling.svg)
+
+| Strategy | How it works | When to use |
+|----------|-------------|-------------|
+| **Static split** | Fixed share per worker upfront | All tasks equal cost |
+| **Shared queue (pull)** | Idle workers take next task | Task costs vary |
+| **Work-stealing** | Idle workers steal from busy | Highly variable costs |
+| **Locality-aware** | Run where data already lives | Data is expensive to move |
+
+```python
+# Static: you split
+chunks = split_evenly(corpus, n_workers)
+
+# Pull-based: framework splits
+futures = client.map(process_doc, corpus)  # Dask
+futures = [process.remote(d) for d in corpus]  # Ray
+```
+
+> `ProcessPoolExecutor.map` from Week 4 is the pull-based pattern.
+> Dask's distributed scheduler and Ray's per-node schedulers extend it to clusters.
+
+---
+
+## Q3: What Moves? (The Cost Ladder)
+
+![bg right:40% 90%](img/w05-cost-ladder.svg)
+
+Every edge in the task graph that crosses workers means data travels:
+
+| Where | Cost |
+|-------|------|
+| Same thread / shared heap | ~ns |
+| Other process, same machine (pickle or shared mem) | ~µs–ms |
+| Other machine (network: TCP, gRPC) | ~ms |
+
+> A task computes for 1 ms but its arguments take 5 ms to copy?
+> **80% of the time is moving data, not computing.**
+
+---
+
+## Q3 in Code: Pass Reference, Not Data
+
+```python
+# BAD: 20 MB matrix pickled with EVERY task
+futures = [score.remote(matrix, i) for i in range(20)]
+#   → 20 × 20 MB = 400 MB serialized
+
+# GOOD: serialize once, pass a reference
+ref = ray.put(matrix)                        # 1 × 20 MB
+futures = [score.remote(ref, i) for i in range(20)]
+```
+
+```python
+# Same idea in Dask
+big_ref = client.scatter(big, broadcast=True)  # ship once to every worker
+futures = [client.submit(score, big_ref, i) for i in range(16)]
+```
+
+> Same fix as Week 4's `process_pool_search.py`. Same principle at any scale.
 
 ---
 
@@ -437,14 +572,67 @@ worker 3: g3 ─┘                          └─► g0+g1+g2+g3
 
 ---
 
+## Four Communication Patterns
+
+| Pattern | Meaning | Week 3 analog | AI example |
+|---------|---------|---------------|------------|
+| **Broadcast** | Same data to all workers | — | Send IDF weights to all chunks |
+| **Reduce / All-reduce** | Combine results from all | Barrier + merge | DDP gradient sync (Week 10) |
+| **Shuffle** | Redistribute by key | — | Repartition dataset by length |
+| **Point-to-point** | Send between specific workers | Producer → consumer | Pipeline stages (Week 11) |
+
+```text
+All-reduce (DDP Week 10):
+  worker 0: g0 ─┐                          ┌─► g0+g1+g2+g3
+  worker 1: g1 ─┤   reduce (sum)           ├─► g0+g1+g2+g3
+  worker 2: g2 ─┤   + broadcast the sum    ├─► g0+g1+g2+g3
+  worker 3: g3 ─┘                          └─► g0+g1+g2+g3
+```
+
+> In Week 3 you used locks and queues. At distributed scale,
+> these four patterns replace them.
+
+---
+
+## Q3 in Math: Amdahl's Law with Communication
+
+Standard:
+$$S(N) = \frac{1}{f_{serial} + \frac{1 - f_{serial}}{N}}$$
+
+With communication:
+$$S(N) = \frac{1}{f_{serial} + f_{comm} + \frac{1 - f_{serial} - f_{comm}}{N}}$$
+
+- $f_{serial}$: the reduce step, the narrow waist.
+- $f_{comm}$: task overhead + serialization + transfer.
+- Ceiling: as $N \to \infty$, $S \to \dfrac{1}{f_{serial} + f_{comm}}$.
+
+> **If $f_{comm}$ grows with $N$ (more workers → more messages),
+> adding workers can make things slower.**
+
+---
+
+## Q2 + Q3 + Q4 Summary
+
+| Question | Answer |
+|----------|--------|
+| **Q2: Who does what?** | A scheduler assigns tasks (static, pull, work-stealing, locality-aware) |
+| **Q3: What moves?** | Data crossing workers. Pass references, not values. All-reduce for shared results. |
+| **Q4: Who waits for whom?** | The task graph. The narrow waist sets the serial fraction. |
+
+> These three are inseparable. The graph decides what can move in parallel;
+> what moves decides who is free to take the next task.
+
+---
+
 <!-- _class: lead -->
 
 # Part V
 # The Landscape of Systems
+### → How different tools answer the four questions differently
 
 ---
 
-## The Spectrum of Parallel Tools
+## The Spectrum
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
@@ -464,56 +652,7 @@ worker 3: g3 ─┘                          └─► g0+g1+g2+g3
 ```
 
 > Each row answers the same four questions differently.
-> The further down you go, the more the framework manages for you.
-
----
-
-## A Brief History (Vocabulary)
-
-| Year | System | Key idea | Legacy |
-|------|--------|----------|--------|
-| 1994 | **MPI** | Explicit messages between ranks | Still used for HPC numerics |
-| 2004 | **MapReduce** | map → shuffle → reduce; fault tolerance by re-execution | The pattern every framework copies |
-| 2012 | **Spark** | In-memory (RDDs), lineage-based recovery | Industry standard for ETL/analytics |
-| 2015 | **Dask** | "NumPy/pandas but bigger", PyData ecosystem | Natural fit for Python data science |
-| 2018 | **Ray** | Tasks + actors, built for ML | Growing fast in AI infrastructure |
-
-> You will meet **Spark** in industry. You will use **Dask/Ray** in this course.
-> The concepts (partition, schedule, communicate, recover) are the same in all of them.
-
----
-
-## Cluster, OpenMP, MPI: Three Words You Will Meet
-
-![w:620](img/w05-memory-models.svg)
-
-- **Cluster:** nodes (each with **its own** RAM) + a network + a job scheduler (Slurm).
-- **OpenMP:** threads sharing one node's memory, via a compiler pragma:
-  `#pragma omp parallel for reduction(+:sum)`
-- **MPI:** processes with separate memory that **send messages** (a library standard).
-
----
-
-## MPI: The Manual Baseline (2 minutes)
-
-```c
-MPI_Comm_rank(MPI_COMM_WORLD, &rank);   // who am I?
-MPI_Comm_size(MPI_COMM_WORLD, &size);   // how many of us?
-
-for (long i = rank; i < N; i += size)   // my share
-    local += 1.0 / (i + 1);
-
-MPI_Reduce(&local, &total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-```
-
-**What MPI makes you do by hand:**
-- Split the work (`i = rank; i += size`)
-- Combine results (`MPI_Reduce`)
-- Handle failure (if one rank dies, the whole job stops)
-
-> Dask and Ray automate exactly this bookkeeping.
-> That's their value proposition.
-
+> The further down, the more the framework manages for you.
 
 ---
 
@@ -529,20 +668,134 @@ MPI_Reduce(&local, &total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
 ---
 
-## Dask vs. Ray
+## How Dask and Ray Answer the Four Questions
+
+| Question | Dask | Ray |
+|----------|------|-----|
+| **Q1: Split** | Chunked arrays / DataFrames / bags | You decide; pass chunks as arguments |
+| **Q2: Assign** | Central scheduler, work-stealing | Decentralised, resource + locality-aware |
+| **Q3: Move** | `client.scatter()` over TCP (or UCX) | `ray.put()` → shared-memory object store |
+| **Q4: Wait** | Static graph + `compute()` / dynamic futures | Futures + `ray.get()` / `ray.wait()` |
+
+![bg right:45% 85%](img/w05-dask-layers.svg)
+
+---
+
+## Ray's Model: Visualised
+
+![w:700](img/w05-ray-model.svg)
+
+- **Driver** (your script) submits tasks via `.remote()`
+- **Workers** execute stateless tasks or host stateful actors
+- **Object store** (shared memory on each node) holds `ray.put()` values
+- Workers on the same node read big arrays **zero-copy** from the store
+
+---
+
+## Two Memory Models: OpenMP vs MPI
+
+![w:620](img/w05-memory-models.svg)
+
+- **Cluster:** nodes (each with **its own** RAM) + a network + a job scheduler (Slurm).
+- **OpenMP:** threads sharing one node's memory: `#pragma omp parallel for reduction(+:sum)`
+- **MPI:** processes with separate memory that **send messages**. Partial failures: you handle them.
+
+> Dask and Ray work in **both** modes: same code, different backend. Colab = one node.
+
+---
+
+## A Brief History (Vocabulary)
+
+| Year | System | Key idea | Legacy |
+|------|--------|----------|--------|
+| 1994 | **MPI** | Explicit messages between ranks | Still used for HPC numerics |
+| 2004 | **MapReduce** | map → shuffle → reduce; retry on failure | The pattern every framework copies |
+| 2012 | **Spark** | In-memory (RDDs), lineage-based recovery | Industry standard for ETL/analytics |
+| 2015 | **Dask** | "NumPy/pandas but bigger", PyData ecosystem | Natural fit for Python data science |
+| 2018 | **Ray** | Tasks + actors, built for ML | Growing fast in AI infrastructure |
+
+> You will meet **Spark** in industry. You will use **Dask/Ray** in this course.
+> The concepts (partition, schedule, communicate, recover) are the same in all of them.
+
+---
+
+## MPI: The Manual Baseline
+
+```c
+MPI_Comm_rank(MPI_COMM_WORLD, &rank);   // who am I?       Q2
+MPI_Comm_size(MPI_COMM_WORLD, &size);   // how many of us?
+for (long i = rank; i < N; i += size)   // my share        Q1
+    local += 1.0 / (i + 1);
+MPI_Reduce(&local, &total, 1, MPI_DOUBLE,                  Q3, Q4
+           MPI_SUM, 0, MPI_COMM_WORLD);
+```
+
+**What MPI makes you do by hand:**
+- Q1: split the work (`i = rank; i += size`)
+- Q3: combine results (`MPI_Reduce`)
+- Failure: if one rank dies, the whole job stops (no Q5)
+
+> Dask and Ray automate exactly this bookkeeping.
+> That's their value proposition.
+
+---
+
+## The Stack: Who Does the Arithmetic?
+
+![w:700](img/w05-stack.svg)
+
+> **Dask and Ray do NOT do the arithmetic.**
+> They decide *what runs where* and *move data* (Q2, Q3).
+> NumPy / BLAS / your code does the actual computation.
+
+---
+
+## A Hidden Trap: Threads Inside Workers
+
+```text
+4 Dask workers × 4 BLAS threads each = 16 threads on 4 cores → oversubscription
+```
+
+Fix: `workers × BLAS_threads ≤ cores`. Set `OMP_NUM_THREADS=1` per worker.
+
+| BLAS threads per worker | total threads | time (2 cores, our run) |
+|:-----------------------:|:-------------:|:-----------------------:|
+| 1 | 2 | 0.73 s |
+| 4 | 8 | 0.93 s |
+
+📁 `class-examples/week05/09_blas_oversubscription.py`
+
+---
+
+## What They Are Not
+
+| | MPI | Dask / Ray |
+|---|---|---|
+| **Good at** | Tightly-coupled numerics, very low latency | Coarse tasks, irregular work, Python workflows |
+| **You manage** | Splitting, messages, failure | Almost nothing |
+| **Overhead per task** | Microseconds | Around a millisecond (we measure it) |
+| **Fault tolerance** | Little | Built in (Q5) |
+
+> Millions of tiny operations → not Dask/Ray tasks.
+> We'll see exactly why in the granularity sweep.
+
+---
+
+## Dask vs. Ray: Side by Side
 
 | | **Dask** | **Ray** |
 |---|---|---|
-| **You think in** | Chunked arrays / tables / bags | Function calls and objects |
-| **Mental model** | "NumPy / pandas, but bigger" | "`f()`, but on another worker" |
-| **Graph** | Built from collection code (static) or futures (dynamic) | Built as program runs (dynamic) |
-| **Data sharing** | `client.scatter()` | `ray.put()` → object store |
-| **Stateful workers** | Possible, not primary | Actors (core feature) |
-| **Fault tolerance** | Re-run lost tasks | Retry tasks; restart actors |
-| **Strongest at** | Data bigger than RAM | Many independent tasks, ML pipelines |
-| **Grew from** | PyData (NumPy/pandas maintainers) | ML systems research (Berkeley) |
+| You think in | Chunked arrays / tables / bags | Function calls and objects |
+| Mental model | "NumPy/pandas, but bigger" | "`f()`, but on another worker" |
+| Graph (Q4) | Static (collections) or dynamic (futures) | Dynamic (tasks, actors) |
+| Data sharing (Q3) | `client.scatter()` | `ray.put()` → object store |
+| Stateful workers | Possible, not primary | **Actors** (core feature) |
+| Fault tolerance (Q5) | Re-run lost tasks | Retry tasks; restart actors |
+| Strongest at | Data bigger than RAM | Many independent tasks, ML pipelines |
+| Grew from | PyData (NumPy/pandas maintainers) | ML systems research (Berkeley) |
 
-> They overlap. For Project 1, either could work. The point is to know *why* you'd pick one.
+> They overlap. For Project 1, either could work.
+> The point is to know **why** you'd pick one.
 
 ---
 
@@ -563,30 +816,18 @@ The Ray object store is per node: moving an object to another node is a network 
 
 ---
 
-## The Stack: Who Does the Arithmetic?
+## Part V Summary
 
-![w:750](img/w05-stack.svg)
+> Different tools answer the same four questions differently:
+> - **Q1 (split):** Dask chunks for you; Ray leaves it to you.
+> - **Q2 (assign):** Dask = central scheduler; Ray = decentralised + locality.
+> - **Q3 (move):** Dask = scatter over TCP; Ray = shared-memory object store.
+> - **Q4 (wait):** Dask = static graph + futures; Ray = futures + actors.
+> - **Q5 (failure):** Dask retries tasks; Ray retries tasks *and* restarts actors.
+>
+> The concepts transfer. The API is the easy part.
 
-> **Dask and Ray do NOT do the arithmetic.**
-> They decide *what runs where* and *move data*.
-> NumPy / BLAS / your code does the actual computation.
-
----
-
-## A Hidden Trap: Threads Inside Workers
-
-NumPy calls BLAS, which spawns its own threads.
-4 workers × 4 BLAS threads = 16 threads on 4 cores → **oversubscription**.
-
-Fix: `workers × BLAS_threads ≤ cores`. Set `OMP_NUM_THREADS=1` per worker.
-
-```text
-BLAS threads per worker | total threads | time   (2 cores, our run)
-          1             |       2       | 0.73 s
-          4             |       8       | 0.93 s
-```
-
-> 📁 `class-examples/week05/09_blas_oversubscription.py`
+Next: we'll see the **same DF → IDF problem** solved in both styles.
 
 ---
 
@@ -802,30 +1043,468 @@ class Predictor:
 
 ---
 
-## Dask Extras (Brief)
+<!-- _class: lead -->
 
-**Dask Array:** chunked NumPy. Lazy. Out-of-core.
-```python
-x = da.ones((100_000, 5000), chunks=(10_000, 5000))  # 4 GB, never in RAM at once
-(x * 2 + 1).sum().compute()
+# Part VII
+# Tutorial: Dask and Ray, Step by Step
+### create · run · watch · manage · shut down
+
+<!-- note:
+~40 min, hands-on. Students run each step on Colab BEFORE you explain it (predict -> run -> explain).
+Files: 17_dask_tutorial.py (steps 1-9) and 18_ray_tutorial.py (steps 1-8). Run one step with: python 17_dask_tutorial.py 4
+Both files were written to run step by step; run_all_examples.py runs all steps.
+-->
+
+---
+
+## How to Follow Along
+
+Two tracks with the same shape: **create → run → watch → manage → close**.
+
+| Track | File | Steps |
+|---|---|---|
+| **Dask** | `17_dask_tutorial.py N` | 1–9 |
+| **Ray** | `18_ray_tutorial.py N` | 1–8 |
+
+```text
+!pip install -q "dask[complete]" ray      # Colab: one cell
+!apt-get install -y -q graphviz           # only for dask.visualize
+!python 17_dask_tutorial.py 4             # run one step
 ```
 
-**Dask DataFrame:** chunked pandas. Same API.
+Each step: **goal → code → what to observe.** Predict before you run.
+
+> In a **script**, keep clusters inside `if __name__ == "__main__":`. In a notebook you do not need it.
+
+---
+
+## Dask 1 · Start With a Lazy Value
+
 ```python
-ddf = dd.read_csv("data/*.csv")
-ddf.groupby("author")["length"].mean().compute()
+import dask
+from dask import delayed
+
+@delayed
+def inc(x): return x + 1
+@delayed
+def add(a, b): return a + b
+
+total = add(inc(1), inc(2))      # builds a graph, runs nothing
+print(total)                     # Delayed('add-...')
+dask.visualize(total, filename="tutorial_graph", format="png")
+print(total.compute())           # 5: now it runs
 ```
 
-**Schedulers:** threads (NumPy ops, GIL released) vs. processes (pure Python).
-Same GIL logic from Week 4.
+> **Observe:** the first `print` shows no number. Nothing ran until `.compute()`.
+> No cluster exists yet: this uses Dask's built-in **threads**.
 
-> 📁 `class-examples/week05/03_dask_array_chunks.py` (optional demo)
+📁 `17_dask_tutorial.py 1`
+
+---
+
+## Dask 2 · Choose Where It Runs
+
+```python
+tasks = [delayed(burn)(1_500_000) for _ in range(8)]   # pure-Python CPU work
+
+dask.compute(*tasks, scheduler="synchronous")            # one thread: debug here
+dask.compute(*tasks, scheduler="threads",   num_workers=2)
+dask.compute(*tasks, scheduler="processes", num_workers=2)   # dask.multiprocessing
+
+with dask.config.set(scheduler="processes", num_workers=2):  # a whole block
+    dask.compute(*tasks)
+```
+
+> **Predict:** which of the three is fastest for pure Python? (Week 4: the GIL.)
+> `scheduler="processes"` is the string for the `dask.multiprocessing` scheduler.
+> No cluster yet: only a choice of **pool**.
+
+📁 `17_dask_tutorial.py 2`
+
+---
+
+## Dask 3 · Pick a Collection
+
+```python
+x = da.random.random((4000, 4000), chunks=(1000, 1000))      # Array: chunked NumPy
+x.sum().compute()
+
+sq = db.from_sequence(range(10), npartitions=2).map(lambda v: v * v)   # Bag: Python objects
+sq.sum().compute()
+
+ddf = dd.from_pandas(pdf, npartitions=4)                      # DataFrame: chunked pandas
+ddf.groupby("author")["n"].mean().compute()
+```
+
+| Collection | Default scheduler |
+|---|---|
+| Array, DataFrame, `delayed` | threads |
+| Bag | processes |
+
+> **Observe:** `chunks` / `npartitions` is the **granularity dial** from Part II.
+> Each result is checked against plain NumPy / pandas in the file.
+
+📁 `17_dask_tutorial.py 3` · `03_dask_array_chunks.py`
+
+---
+
+## Dask 4 · What a LocalCluster Starts
+
+![w:760](img/w05-dask-cluster.svg)
+
+- A **scheduler** process and **N worker** processes, all on your machine.
+- A **Client** connects your script to the scheduler.
+- Creating a Client makes it the **default**: `.compute()` now runs on the cluster.
+
+---
+
+## Dask 4 · Start It, Use It, Close It
+
+```python
+from dask.distributed import Client, LocalCluster
+
+if __name__ == "__main__":
+    with LocalCluster(n_workers=2, threads_per_worker=1, memory_limit="1GB") as cluster, \
+         Client(cluster) as client:
+        print(client)                    # workers=2, threads=2
+        print(client.dashboard_link)     # http://127.0.0.1:8787/status
+        print(client.submit(sum, [1, 2, 3]).result())    # 6
+```
+
+- The `with` block **closes the workers** on exit.
+- `memory_limit` is **per worker**.
+- `Client()` with no arguments starts a LocalCluster for you.
+
+📁 `17_dask_tutorial.py 4`
+
+---
+
+## Dask 5 · Size the Cluster
+
+| Your tasks are… | Use | Why |
+|---|---|---|
+| pure Python | `n_workers=cores, threads_per_worker=1` | one GIL per worker |
+| NumPy / pandas (release the GIL) | fewer workers, more threads | less copying between processes |
+| memory hungry | fewer workers, larger `memory_limit` | each worker holds its chunks |
+
+```python
+os.environ["OMP_NUM_THREADS"] = "1"          # BEFORE creating the cluster (Part V trap)
+LocalCluster(n_workers=2, threads_per_worker=1)      # 2 GILs
+LocalCluster(n_workers=1, threads_per_worker=2)      # 1 GIL
+```
+
+> **Rule:** workers × threads × BLAS threads ≤ cores.
+> **Predict:** pure-Python tasks, 2 cores: which cluster is faster?
+
+📁 `17_dask_tutorial.py 5`
+
+---
+
+## Dask 6 · Futures: Submit, Map, Wait
+
+```python
+futs = client.map(burn, [200_000 * k for k in range(1, 7)])   # starts at once
+for f in as_completed(futs):                                   # finish order
+    print(f.result())
+total = client.submit(sum, futs)                               # futures as arguments
+print(total.result())
+```
+
+- Unlike `delayed`, a future **starts running immediately**.
+- `client.gather(futs)` collects a whole list.
+- This is a **dynamic** graph, like Ray's.
+
+📁 `17_dask_tutorial.py 6`
+
+---
+
+## Dask 7 · Move Data Once
+
+```python
+big_f = client.scatter(big, broadcast=True)             # ship once to every worker
+futs  = [client.submit(row_sum, big_f, i) for i in range(8)]   # tasks carry a reference
+
+x = da.random.random((6000, 6000), chunks=(1500, 1500)).persist()
+x.sum().compute()      # computes the chunks and keeps them on the workers
+x.sum().compute()      # reuses them: much faster
+```
+
+- `scatter` = Part IV's **broadcast**: pass the reference, not the data.
+- `persist` = compute **now** and keep the result on the workers.
+
+📁 `17_dask_tutorial.py 7`
+
+---
+
+## Dask 8 · Watch It Run
+
+| Dashboard page | Look for |
+|---|---|
+| **Status** → Task Stream | **white gaps** = idle workers; **red** = data transfer |
+| **Workers** | memory bar near `memory_limit` = trouble |
+| **Graph** | the task graph as it runs |
+| **Profile** | where the time goes inside tasks |
+
+```python
+from dask.distributed import performance_report
+with performance_report(filename="dask-report.html"):
+    client.gather(client.map(burn, [800_000] * 12))
+```
+
+> On Colab the dashboard port is not reachable: use `performance_report` and download the HTML.
+
+📁 `17_dask_tutorial.py 8`
+
+---
+
+## Dask 9 · Manage: Scale, Cancel, Restart, Close
+
+```python
+cluster.scale(3)                  # ask for 3 workers
+client.wait_for_workers(3)
+slow = client.submit(time.sleep, 60)
+slow.cancel()                     # give up on one task
+client.restart()                  # restart all workers, forget all futures
+client.close(); cluster.close()   # always: client first, then cluster
+```
+
+| Symptom | Likely cause → fix |
+|---|---|
+| `KilledWorker` | worker ran out of memory → smaller chunks, fewer workers |
+| script hangs at start | missing `if __name__ == "__main__":` |
+| leftover processes | cluster never closed → use `with` |
+
+📁 `17_dask_tutorial.py 9`
+
+---
+
+## Dask 10 · Beyond One Machine
+
+Same client code, different **cluster object**:
+
+```text
+dask scheduler                           # head node: prints tcp://HOST:8786
+dask worker tcp://HOST:8786              # on every worker node
+```
+
+```python
+client = Client("tcp://HOST:8786")       # connect: everything else is unchanged
+
+from dask_jobqueue import SLURMCluster  # or: let Slurm start the workers
+cluster = SLURMCluster(cores=8, memory="16GB")
+cluster.scale(jobs=4)
+```
+
+> We have no cluster in class. The point: **only the cluster object changes**, not your code.
+
+---
+
+## Ray 1 · Start and Stop
+
+```python
+import ray
+
+ray.init(num_cpus=2)                     # starts a local Ray: a one-node cluster
+print(ray.is_initialized())              # True
+print(ray.cluster_resources())           # {'CPU': 2.0, 'memory': ..., ...}
+ray.shutdown()                           # always, when finished
+```
+
+- `ray.init()` **starts** Ray (scheduler, object store, workers) inside your script.
+- `num_cpus` is what you **declare**, not what the laptop has.
+- Unlike Dask, there is no separate "client" object.
+
+📁 `18_ray_tutorial.py 1`
+
+---
+
+## Ray 2 · Tasks and Futures
+
+```python
+@ray.remote
+def slow_square(x):
+    time.sleep(0.5)
+    return x * x
+
+refs = [slow_square.remote(i) for i in range(8)]    # returns at once: futures
+print(refs[0])                                       # ObjectRef(...)
+print(ray.get(refs))                                 # blocks until all are done
+```
+
+> **Predict:** 8 tasks × 0.5 s on 2 CPUs: how long? (≈ 2 s)
+> **Anti-pattern:** `ray.get` inside the loop waits after every task.
+
+📁 `18_ray_tutorial.py 2`
+
+---
+
+## Ray 3 · Objects and Dependencies
+
+```python
+ref = ray.put(np.arange(5))              # store once, get a reference
+ray.get(ref)
+
+m = make_matrix.remote(1000)             # the result stays in the object store
+s = total.remote(m)                      # passing a ref = a dependency
+ray.get(s)                               # only a float comes back
+
+ray.get(add.remote(add.remote(1, 2), add.remote(3, 4)))    # futures as arguments → 10
+```
+
+- You build the graph with **ordinary Python**. Call `ray.get` only at the end.
+- Same idea as Dask's `scatter` and futures.
+
+📁 `18_ray_tutorial.py 3`
+
+---
+
+## Ray 4 · Resources: Who Gets a CPU?
+
+```python
+@ray.remote(num_cpus=1)
+def one_core(i): ...
+
+@ray.remote(num_cpus=2)
+def two_cores(i): ...
+
+ray.available_resources().get("CPU", 0)           # free CPUs right now
+one_core.options(num_cpus=2).remote(0)             # override for one call
+```
+
+> **Predict:** 4 × `one_core` and 2 × `two_cores` on 2 CPUs: how long does each batch take?
+> Resources are **logical labels**: Ray never runs more tasks than the CPUs you declared.
+> For BLAS-heavy tasks, set `num_cpus` to the threads they really use.
+
+📁 `18_ray_tutorial.py 4`
+
+---
+
+## Ray 5 · Waiting, Timeouts, Cancel
+
+```python
+ready, pending = ray.wait(refs, num_returns=1, timeout=1.5)   # next finished, or give up
+for r in pending:
+    ray.cancel(r)                                              # stop a straggler
+
+try:
+    ray.get(refs[2], timeout=5)
+except ray.exceptions.RayError as e:                           # cancelled or timed out
+    print(type(e).__name__)
+```
+
+- `ray.wait` is Ray's `as_completed`.
+- One slow task never has to hold up the rest.
+
+📁 `18_ray_tutorial.py 5`
+
+---
+
+## Ray 6 · Actors
+
+```python
+@ray.remote
+class Counter:
+    def __init__(self): self.n = 0
+    def incr(self):
+        self.n += 1
+        return self.n
+
+c = Counter.remote()                                   # starts a worker process
+[ray.get(c.incr.remote()) for _ in range(3)]          # 1, 2, 3: state is kept
+
+named = Counter.options(name="shared-counter").remote()
+ray.get_actor("shared-counter")                        # find it by name
+ray.kill(c)                                            # actors live until killed
+```
+
+> Each method call is a task on **that one** process. Calls run **one at a time**.
+
+📁 `18_ray_tutorial.py 6`
+
+---
+
+## Ray 7 · Watch It Run
+
+| Tool | Shows |
+|---|---|
+| **Dashboard** `:8265` (`pip install "ray[default]"`) | jobs, nodes, actors, logs, metrics |
+| `ray status` | nodes and resource usage |
+| `ray.timeline(filename="t.json")` | when each task ran: load it in `ui.perfetto.dev` |
+| `ray.cluster_resources()` vs `available_resources()` | declared vs free |
+
+```python
+ray.init(num_cpus=2, include_dashboard=True)        # http://127.0.0.1:8265
+```
+
+> Same reading as Dask: **gaps** in the timeline are idle workers.
+
+📁 `18_ray_tutorial.py 7`
+
+---
+
+## Ray 8 · When a Task Fails
+
+```python
+@ray.remote(max_retries=2, retry_exceptions=True)
+def flaky(path): ...          # raises on attempts 1 and 2, succeeds on 3
+```
+
+| Event | Default | Change with |
+|---|---|---|
+| Worker process dies | retried, `max_retries=3` | `max_retries=0` |
+| Your code raises | **not** retried | `retry_exceptions=True` |
+| Actor dies | gone | `max_restarts=1` (state is lost) |
+
+📁 `18_ray_tutorial.py 8` · full demo: `15_ray_fault_tolerance.py`
+
+---
+
+## Ray 9 · A Real Cluster
+
+![w:640](img/w05-ray-cluster.svg)
+
+```text
+ray start --head --port=6379          # head node (dashboard :8265)
+ray start --address=HEAD_IP:6379      # every other node
+ray status                            # check the nodes
+ray stop                              # when finished
+```
+
+In the script: `ray.init(address="auto")`: **join**, do not start.
+
+---
+
+## Lifecycle Cheat Sheet
+
+| Stage | Dask | Ray |
+|---|---|---|
+| **Create** | `LocalCluster(...)` + `Client(cluster)` | `ray.init(num_cpus=2)` |
+| **Submit** | `client.submit(f, x)` / `client.map(f, xs)` | `f.remote(x)` |
+| **Get result** | `future.result()` / `client.gather(futs)` | `ray.get(ref)` |
+| **Share data** | `client.scatter(x, broadcast=True)` | `ray.put(x)` |
+| **First finished** | `as_completed(futs)` | `ray.wait(refs)` |
+| **Watch** | dashboard `:8787`, `performance_report` | dashboard `:8265`, `ray.timeline()` |
+| **Cancel** | `future.cancel()` | `ray.cancel(ref)` |
+| **Close** | `client.close()`; `cluster.close()` | `ray.shutdown()` |
+| **Real cluster** | `dask scheduler` + `dask worker` | `ray start --head` / `--address` |
+
+---
+
+## Tutorial Exercises (15 min)
+
+1. **Dask 2:** run it. Which scheduler wins on pure Python? Change `burn` to a NumPy matrix multiply. Does the answer change?
+2. **Dask 5:** run `2 × 1` vs `1 × 2`. Then try `n_workers=4` on 2 cores. What happens?
+3. **Dask 8:** open the Task Stream (or the report). Find the idle gaps. What caused them?
+4. **Ray 4:** predict, then run. Then set `num_cpus=3` on a task in a 2-CPU Ray. What happens?
+5. **Both:** break something on purpose (kill a worker, cancel a task). What did the framework do?
+
+> Hand in: one screenshot of a dashboard or timeline, and one sentence on what it shows.
 
 ---
 
 <!-- _class: lead -->
 
-# Part VII
+# Part VIII
 # Choosing: Should You Distribute at All?
 
 ---

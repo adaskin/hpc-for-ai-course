@@ -19,9 +19,9 @@ GROUPS = {
     "core": ["01_granularity_sweep.py", "09_blas_oversubscription.py"],
     "dask": ["02_dask_delayed_graph.py", "03_dask_array_chunks.py", "04_dask_array_embeddings.py",
              "05_dask_bag_df_idf.py", "06_dask_dataframe_groupby.py", "07_dask_schedulers.py",
-             "08_dask_distributed_futures.py"],
+             "08_dask_distributed_futures.py", "17_dask_tutorial.py"],
     "ray": ["10_ray_tasks.py", "11_ray_object_store.py", "12_ray_wait.py", "13_ray_granularity.py",
-            "14_ray_actors.py", "15_ray_fault_tolerance.py", "16_ray_df_idf.py"],
+            "14_ray_actors.py", "15_ray_fault_tolerance.py", "16_ray_df_idf.py", "18_ray_tutorial.py"],
 }
 
 
