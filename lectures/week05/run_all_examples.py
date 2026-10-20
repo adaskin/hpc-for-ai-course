@@ -16,7 +16,7 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 GROUPS = {
-    "core": ["01_granularity_sweep.py", "09_blas_oversubscription.py"],
+    "core": ["01_granularity_sweep.py", "09_blas_oversubscription.py", "19_scale_estimate.py", "20_tree_reduction.py"],
     "dask": ["02_dask_delayed_graph.py", "03_dask_array_chunks.py", "04_dask_array_embeddings.py",
              "05_dask_bag_df_idf.py", "06_dask_dataframe_groupby.py", "07_dask_schedulers.py",
              "08_dask_distributed_futures.py", "17_dask_tutorial.py"],

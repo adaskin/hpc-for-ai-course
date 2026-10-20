@@ -355,6 +355,60 @@ def fig_ray_cluster():
     return fig
 
 
+def fig_scatter_gather():
+    fig, ax = blank((9, 4.1), (0, 20), (-1.2, 8.6))
+    box(ax, 0.2, 3.1, 3.4, 2.2, "query\n(3 KB)", fc=ORANGE_L, ec=ORANGE, fs=11, lw=2)
+    ys = [6.0, 3.6, 0.7]
+    names = ["shard 1", "shard 2", "shard 32"]
+    for y, nm in zip(ys, names):
+        box(ax, 6.4, y, 5.6, 1.7, fc="white", ec=BLUE, lw=1.6)
+        ax.text(9.2, y + 1.15, nm, ha="center", fontsize=10.5, weight="bold", color=INK)
+        ax.text(9.2, y + 0.5, "3.1M docs · 9.6 GB in RAM", ha="center", fontsize=9, color=GRAY)
+        arrow(ax, 3.6, 4.2, 6.4, y + 0.85, color=INK, lw=1.3)
+        arrow(ax, 12.0, y + 0.85, 14.6, 4.8 - 0.6 * ys.index(y), color=INK, lw=1.3)
+    ax.text(9.2, 2.75, "\u22ee", ha="center", va="center", fontsize=16, color=GRAY)
+    box(ax, 14.6, 3.1, 5.2, 2.2, "merge\n32 \u00d7 10 candidates\n\u2192 global top-10", fc=GRAY_L, ec=GRAY, fs=10)
+    ax.text(5.0, 6.9, "broadcast\n3 KB each", ha="center", fontsize=9, color=ORANGE)
+    ax.text(13.4, 6.9, "top-10 back\n120 B each", ha="center", fontsize=9, color=BLUE)
+    ax.text(10.0, -0.7, "moved per query: ~100 KB out, ~4 KB back   \u00b7   scanned inside the shards: 307 GB",
+            ha="center", fontsize=10.5, color=INK, weight="bold")
+    return fig
+
+
+def fig_scale_wall():
+    docs = ["20 thousand (Project 1)", "1 million", "10 million", "100 million"]
+    gb = [20_000 * 768 * 4 / 1e9, 1e6 * 768 * 4 / 1e9, 1e7 * 768 * 4 / 1e9, 1e8 * 768 * 4 / 1e9]
+    ram, bw = 12.0, 20.0
+    fig, ax = plt.subplots(figsize=(9, 3.7))
+    y = list(range(len(gb)))[::-1]
+    colors = [BLUE if g <= ram else ORANGE for g in gb]
+    ax.barh(y, gb, color=colors, height=0.58, edgecolor=INK, linewidth=0.8)
+    ax.set_xscale("log")
+    ax.set_xlim(0.02, 9000)
+    labels = []
+    for g, d in zip(gb, docs):
+        scan = g / bw
+        scan_s = f"{scan * 1000:.0f} ms" if scan < 0.1 else f"{scan:.2g} s"
+        labels.append(f"{d}\none scan {scan_s}{'' if g <= ram else '*'}")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.axvline(ram, color=INK, lw=1.6, ls="--")
+    ax.text(ram * 1.12, 3.5, "one worker's RAM (~12 GB)", fontsize=9.5, color=INK, va="center")
+    for yi, g in zip(y, gb):
+        size = f"{g * 1000:.0f} MB" if g < 1 else f"{g:.1f} GB" if g < 100 else f"{g:.0f} GB"
+        extra = "" if g <= ram else f"  ({g / ram:.1f}\u00d7 RAM)"
+        ax.text(g * 1.15, yi, f"{size}{extra}", va="center", fontsize=10, color=INK)
+    ax.set_xlabel("embedding matrix, 768-d float32 (GB, log scale)", fontsize=10, color=INK)
+    fig.text(0.015, 0.012, "*if it fit in one machine; scan time assumes 20 GB/s memory bandwidth",
+             fontsize=8.5, color=GRAY)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.tick_params(axis="x", labelsize=9)
+    ax.set_ylim(-0.6, 3.8)
+    fig.subplots_adjust(left=0.235, right=0.98, top=0.97, bottom=0.22)
+    return fig
+
+
 FIGS = {
     "w05-memory-models": fig_memory_models, "w05-dfidf-graph": fig_dfidf_graph,
     "w05-granularity": fig_granularity, "w05-cost-ladder": fig_cost_ladder,
@@ -362,6 +416,7 @@ FIGS = {
     "w05-ray-model": fig_ray_model, "w05-stack": fig_stack,
     "w05-why-partition": fig_why_partition,
     "w05-dask-cluster": fig_dask_cluster, "w05-ray-cluster": fig_ray_cluster,
+    "w05-scatter-gather": fig_scatter_gather, "w05-scale-wall": fig_scale_wall,
 }
 
 if __name__ == "__main__":

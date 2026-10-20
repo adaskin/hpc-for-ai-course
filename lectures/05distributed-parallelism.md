@@ -1078,11 +1078,42 @@ Each step: **goal → code → what to observe.** Predict before you run.
 
 ---
 
-# Dask
-https://docs.dask.org/en/stable/10-minutes-to-dask.html 
+## Dask · Collections, Task Graphs, Schedulers
 
-![alt text](img/w05-dask.png)
-https://docs.dask.org/en/stable/_images/dask-overview.svg
+![w:800](img/w05-dask.png)
+
+- **Collections** (Array, DataFrame, Bag, `delayed`) write the plan as a **task graph**.
+- A **scheduler** runs the graph on one machine or on a cluster.
+- Dask is **lazy**: nothing runs until you call `.compute()`.
+
+<!-- _footer: "Figure: Dask documentation, 10 Minutes to Dask (docs.dask.org). The Dask track follows that page." -->
+<!-- note:
+this is the overview figure from the Dask docs (https://docs.dask.org/en/stable/_images/dask-overview.svg).
+Dask 1-3 below follow the "Creating a Dask Object", "Computation" and "Low-Level Interfaces" sections of 10 Minutes to Dask.
+-->
+
+---
+
+<style scoped>
+p { text-align: center; }
+img { display: inline-block; margin: 0 6px; }
+</style>
+
+## Dask · Read the Graph Before You Run It
+
+![h:250 DataFrame graph](https://docs.dask.org/en/stable/_images/10_minutes_dataframe_graph.png) ![h:250 Array graph](https://docs.dask.org/en/stable/_images/10_minutes_array_graph.png) ![h:250 Bag graph](https://docs.dask.org/en/stable/_images/10_minutes_bag_graph.png)
+
+**DataFrame:** select → `cumsum` → subtract · **Array:** `amax` per chunk → aggregate · **Bag:** `map` / `zip` per partition
+
+> **Ask of every graph:** which tasks are independent? Where must pieces meet? (Part IV)
+
+<!-- _footer: "Figures: Dask documentation, 10 Minutes to Dask (docs.dask.org), Visualize the Task Graph. Loaded from the web: needs a network." -->
+<!-- note:
+remote images from docs.dask.org. For offline teaching, save the three PNGs into img/ and change the paths.
+Check the layout in the preview: if the three images do not fit on one row, lower h:250.
+-->
+
+---
 
 ## Dask 1 · Start With a Lazy Value
 
@@ -1305,8 +1336,27 @@ cluster.scale(jobs=4)
 
 ---
 
+## Ray · One Framework, Several Libraries
+
+![w:700](img/ray-talk-ray-stack.png)
+
+| Layer | What it scales |
+|---|---|
+| **Ray Core** | general Python: tasks, actors, objects |
+| **Libraries** | data processing · training · tuning · serving · reinforcement learning |
+
+> This tutorial uses **Ray Core** only. The libraries are built from the same tasks and actors.
+
+<!-- _footer: "Figure: R. Nishihara, Ray talk (Airbnb), 2019, © RISELab: RLlib, Tune, Modin on Ray. Track follows docs.ray.io Getting Started." -->
+<!-- note:
+the figure is from 2019 and shows RLlib, Tune and Modin on Ray. Today's Ray docs list the libraries Ray Data, Ray Train, Ray Tune, Ray Serve and Ray RLlib on top of Ray Core
+(https://docs.ray.io/en/latest/ray-overview/getting-started.html). Use the figure for the idea, the docs for the current names.
+Ray 1-3 below follow the Ray Core quickstart: tasks, objects (put/get), actors.
+-->
+
+---
+
 ## Ray 1 · Start and Stop
-https://docs.ray.io/en/master/index.html
 
 ```python
 import ray
@@ -1481,6 +1531,18 @@ In the script: `ray.init(address="auto")`: **join**, do not start.
 
 ---
 
+## Ray · What Runs on Each Node?
+
+![w:640](img/ray-talk-architecture.png)
+
+- **Per node:** workers, an **object store**, a **raylet** (scheduler + object manager).
+- **Per cluster:** the **Global Control Store**, the web UI and the tools.
+- **Dask:** one scheduler. **Ray (2019 figure):** one per raylet.
+
+<!-- _footer: "Figure: R. Nishihara, Ray talk (Airbnb), 2019, © RISELab. The architecture has evolved since; see the Ray docs." -->
+
+---
+
 ## Lifecycle Cheat Sheet
 
 | Stage | Dask | Ray |
@@ -1512,6 +1574,242 @@ In the script: `ray.init(address="auto")`: **join**, do not start.
 <!-- _class: lead -->
 
 # Part VIII
+# Why It Matters
+### Project 1, scaled to the real world
+
+<!-- note:
+~15 min. Everything with a number here is arithmetic students can redo:
+  python 19_scale_estimate.py --gbps 20      (memory, move, time, failure tables)
+  python 20_tree_reduction.py                (critical path of two graphs)
+Story: three walls (memory, time, reliability), then what real systems did about them.
+The inputs are ASSUMED and illustrative: 768-d float32, 12 GB RAM per worker, 20 GB/s scan bandwidth (we measured 19-26 GB/s in a 2-core sandbox),
+1,000 docs/s per worker, serial fraction f = 2%, machine MTBF 1,000 days. Ask students to replace them with their own measurements.
+Figures from the Ray talks are credited in the footer of each slide and on the Sources slide.
+-->
+
+---
+
+## Your Project 1 Is the Small Version
+
+![w:860](img/w05-scale-wall.svg)
+
+> Same code, same maths. At 20,000 documents everything fits in RAM and a scan takes **milliseconds**.
+> On a 12 GB machine the wall is **≈ 4 million** documents: the matrix alone no longer fits.
+
+<!-- note:
+Wall = 12e9 bytes / (768 x 4 bytes) = 3.9 million documents, before the corpus, the index or Python itself take any memory.
+"One scan" = matrix size / 20 GB/s. A matrix-vector product is memory-bound, so bandwidth, not FLOPs, sets the time.
+The 10M and 100M scan times are what it WOULD take if the matrix fitted in one machine.
+-->
+
+---
+
+## Move the Query, Not the Data
+
+![w:640](img/w05-scatter-gather.svg)
+
+- **Split** by document (Part III). **Move** 3 KB out and 120 B back per shard: under a millionth of the bytes scanned.
+- **Wait** for the slowest shard, then a tiny serial merge (32 × 10 candidates).
+
+> Communication ≈ 0, so the ceiling from Part II is high. A group-by over all documents would **shuffle**: a very different bill.
+
+<!-- note:
+19_scale_estimate.py checks that the sharded top-10 equals the global top-10 for 1, 4, 7 and 32 shards.
+Exact search needs every shard, so tail latency (p99) is the slowest shard: a straggler delays the whole query.
+Numbers: query = 768 x 4 B = 3,072 B; one result = 8 B id + 4 B score, 10 of them = 120 B; 32 shards -> 98 KB out, 3.8 KB back, vs 307 GB scanned.
+-->
+
+---
+
+## The Time Wall: Encoding 100M Documents
+
+| Workers | Ideal | With f = 2% | Speedup |
+|--------:|------:|------------:|--------:|
+| 1 | 27.8 h | 27.8 h | 1× |
+| 8 | 3.5 h | 4.0 h | 7.0× |
+| 32 | 52 min | 1.4 h | 19.8× |
+| 128 | 13 min | 46 min | 36.2× |
+
+> **Assumed:** 1,000 docs/s per worker, and f = 2% (reduce, scheduling, start-up).
+> Replace both with **your** Project 1 measurements.
+> Ceiling = 1/f = 50×. 128 workers buy 36×, not 128×: the Amdahl slide, now with a price tag.
+
+📁 `19_scale_estimate.py --docs-per-sec 1000 --serial-fraction 0.02`
+
+---
+
+## The Reliability Wall: Something Will Break
+
+| Workers | Job length | P(at least one failure) |
+|--------:|-----------:|------------------------:|
+| 1 | 1 h | 0.004% |
+| 32 | 1 h | 0.13% |
+| 128 | 8 h | 4.2% |
+| **1,000** | **24 h** | **63%** |
+
+$P = 1 - e^{-\text{workers} \times \text{hours} / \text{MTBF}}$ with an **assumed** MTBF of 1,000 days per machine.
+
+> Rare per machine, **certain at scale**. This is the fifth question (Part I).
+> The framework re-runs lost tasks (Ray: `max_retries`, Ray 8). Your job: make tasks **safe to run twice**.
+
+<!-- note:
+MTBF = mean time between failures. 1,000 days is illustrative; real fleets, and especially preemptible/spot machines, differ a lot.
+The point is the shape: expected failures = machines x hours / MTBF. At 1,000 machines x 24 h = 24,000 machine-hours = 1.0 expected failures -> 1 - e^-1 = 63%.
+-->
+
+---
+
+## What the Ray Authors Say
+
+> **Why distributed systems?**
+> More **work** (computation) than one machine can do in a reasonable amount of time.
+> More **data** than can fit in one machine.
+
+The two walls we just computed. Their list of what a distributed system must handle:
+
+| "Aspects of a distributed system" | Our question |
+|---|---|
+| Units of work ("tasks") executed in parallel | **Split** |
+| Scheduling: which tasks run on which machines, and when | **Assign** |
+| Data transfer | **Move** |
+| Failure handling | **Fail** (the fifth) |
+| Resource management (CPUs, GPUs, memory) | **Assign**: `num_cpus`, `num_gpus` |
+
+> Where is **Wait**? In a task system it is implicit: a task waits for the objects it depends on.
+
+<!-- _footer: "Source: R. Nishihara, Distributed Systems and AI: Ray, Programming at Any Scale, UC Berkeley DS100, 5 Aug 2019 (slide: What is Ray?)." -->
+
+---
+
+## Why Every ML Stage Became Its Own System
+
+![w:540](img/ray-talk-ml-ecosystem.png)
+
+- Each stage shipped **its own** distributed system (top), each re-solving scheduling, data transfer and failure handling.
+- Ray's bet: **one general system** (tasks + actors), with the stages as **libraries** (bottom).
+
+<!-- _footer: "Figure: R. Nishihara, Ray talk (Airbnb), 2019, © RISELab. The tools named are those of 2019." -->
+<!-- note:
+Top row: Training (Horovod, Distributed TF, Parameter Server), Model Serving (Clipper, TensorFlow Serving), Streaming (Flink, many others),
+RL (Baselines, RLlib, ELF, Coach, ChainerRL), Data Processing (MapReduce, Hadoop, Spark), Hyperparameter Search (Vizier, many internal systems).
+Ask: what do all six have to implement again? (Part I: split, assign, move, wait, fail.)
+-->
+
+---
+
+## A Pipeline, Not a Job
+
+![w:880](img/ray-talk-online-ml.png)
+
+- **3 min** from feature/label to model output; **5 min** to model deploy.
+- **+5% CTR** (click-through rate) vs an offline model; **+1%** vs the previous in-house system.
+
+> Stateless stages → **tasks**. State (trainer, parameter server, serving) → **actors**. "Colocate & share memory" → **object store**.
+
+<!-- _footer: "Figure and numbers: R. Nishihara, Ray talk (Airbnb), 2019, © RISELab, use-case slide. The slide does not name the company." -->
+<!-- note:
+Slide text: "3 min, streaming + model training, from feature / label to model output. 5 min, streaming + training + serving, from feature / label to model deploy.
+5% CTR improvement comparing to offline model; 1% CTR improvement comparing to in-house solution" (the DS100 version says "blink solution").
+Pipeline: stream-processing stages feed a TF worker; the worker shares memory with the stage before it ("colocate & share memory") and talks to a parameter server (PS) and a serving process.
+Ask: which of these hold state? (trainer, PS, serving) Which are restartable? (the stream stages). That is the task / actor split from Part V.
+-->
+
+---
+
+<style scoped>
+p { text-align: center; }
+img { display: inline-block; margin: 0 8px; }
+</style>
+
+## Same Sum, Two Graphs
+
+![h:330 chain of seven adds](img/ray-talk-tree-chain.png) ![h:330 balanced tree of seven adds](img/ray-talk-tree-balanced.png)
+
+| **Chain** | **Tree** |
+|:---:|:---:|
+| depth 7 → **3.5 s**, however many workers | depth 3 → **1.5 s** with ≥ 4 workers |
+
+<!-- _footer: "Figures: R. Nishihara, Distributed Systems and AI, UC Berkeley DS100, 2019, © RISELab. Each add takes 0.5 s." -->
+<!-- note:
+Both graphs add 8 numbers with 7 adds. Width = how many adds can run at once; depth (critical path) = adds that must follow each other.
+Chain: width 1. Tree: width 4, then 2, then 1. Part IV's vocabulary, on the Ray authors' picture.
+-->
+
+---
+
+## One Line Changes the Graph
+
+```python
+@ray.remote
+def add(x, y):
+    time.sleep(0.5)                    # stand-in for real work
+    return x + y
+
+vals = [1, 2, 3, 4, 5, 6, 7, 8]
+while len(vals) > 1:
+    new_val = add.remote(vals[0], vals[1])
+    vals = [new_val] + vals[2:]        # ✗ chain: the next add waits for new_val
+    # vals = vals[2:] + [new_val]      # ✓ tree: the next add uses two ready values
+print(ray.get(vals[0]))                # 36
+```
+
+> **Predict** (`num_cpus=4`): chain 7 × 0.5 = **3.5 s**; tree 3 × 0.5 = **1.5 s** (≈ 2 s on 2 CPUs: four adds need two rounds).
+> Same adds, one line apart: the **critical path** is the whole difference.
+
+📁 `20_tree_reduction.py` (part A needs no library)
+
+<!-- _footer: "Example: R. Nishihara, Distributed Systems and AI, UC Berkeley DS100, 2019 (slide: Parallelism Example: Tree Reduction)." -->
+<!-- note:
+Sleeping tasks use no CPU, so declaring 4 CPUs on a 2-core machine is fine for this demo (Ray 4: resources are logical labels).
+Chain on 2 workers = 3.5 s, tree on 2 workers = 2.0 s, tree on 4+ = 1.5 s: see the table printed by part A of 20_tree_reduction.py.
+Ties back to Ray 2: calling ray.get inside the loop would serialise either version.
+-->
+
+---
+
+## When State Needs an Owner
+
+```python
+@ray.remote
+class ParameterServer:
+    def __init__(self): self.params = np.zeros(10)
+    def get_params(self): return self.params
+    def update_params(self, grad): self.params -= grad
+
+@ray.remote(num_gpus=1)
+def worker(ps):
+    while True:
+        params = ray.get(ps.get_params.remote())
+        grad = ...                     # e.g. a TensorFlow gradient
+        ps.update_params.remote(grad)
+```
+
+- **One owner** of the weights (an actor, Ray 6): its calls run **one at a time**. If it dies, the state is gone (Ray 8).
+
+> **Week 10:** DDP drops the central owner: every GPU keeps a copy and the gradients are **all-reduced**.
+
+<!-- _footer: "Code after R. Nishihara, Distributed Systems and AI, UC Berkeley DS100, 2019 (slide: Actors: Parameter Server Example)." -->
+
+---
+
+## Same Five Questions, Three Real Systems
+
+| | Search, 100M docs | Encode 100M docs | Online-ML pipeline |
+|---|---|---|---|
+| **Split** | by document → shards | by document → chunks | stages; state vs stream |
+| **Assign** | one task per shard | scheduler spreads chunks | tasks for stages, actors for state |
+| **Move** | 3 KB out, 120 B back | chunks in, vectors out | colocate & share memory |
+| **Wait** | slowest shard, then merge | the final reduce (our f) | minutes from event to deploy |
+| **Fail** | retry a shard (read-only) | retry a chunk (safe twice) | what do we checkpoint? |
+
+> The systems differ. The questions do not. **Ask them first**; pick the tool second.
+
+---
+
+
+<!-- _class: lead -->
+
+# Part IX
 # Choosing: Should You Distribute at All?
 
 ---
@@ -1592,7 +1890,9 @@ When writing your "Why not the others?" section:
 
 6. **At scale, failure is normal.** Retry stateless tasks; checkpoint stateful workers.
 
-7. **Often the right answer is: don't distribute.**
+7. **Scale brings three walls:** memory, time (Amdahl) and reliability (failure).
+
+8. **Often the right answer is: don't distribute.**
 
 ---
 
@@ -1618,11 +1918,30 @@ Run on ≥ 5,000 documents (your Project 1 corpus is fine).
 2. What chunk size did you choose? Evidence?
 3. What data moved, roughly how many bytes, and what did it cost?
 4. Estimate the serial fraction as on the sweep slide: $f \approx \frac{1/S - 1/N}{1 - 1/N}$ *(an upper bound: it also contains start-up, pickling and the reduce)*
+5. **On paper:** with *your* docs/s and $f$, how long for 100M documents on 1, 32, 128 workers? What fails first? (`19_scale_estimate.py`)
 
 > **Expect the plateau:** Colab has 2 cores. 4 workers won't beat 2.
 > The plateau is hardware. The gap below 2× is overhead + serial reduce.
 
 ---
+
+## Sources and Credits
+
+- **Dask track:** *10 Minutes to Dask*, Dask documentation.
+  https://docs.dask.org/en/stable/10-minutes-to-dask.html
+  (figures: `dask-overview.svg`, `10_minutes_*_graph.png`)
+- **Ray track:** *Getting Started*, Ray documentation.
+  https://docs.ray.io/en/latest/ray-overview/getting-started.html
+- **Ray talks:** R. Nishihara, *Distributed Systems and AI: Ray, Programming at Any Scale*, UC Berkeley DS100, 5 Aug 2019,
+  and *Ray: A Fast and Simple Framework for Distributed Applications* (Airbnb talk). Slides © RISELab.
+  Figures used: ML ecosystem, Ray stack, online-ML pipeline, tree reduction, Ray architecture.
+- **Ours:** `19_scale_estimate.py`, `20_tree_reduction.py` (all numbers in Part VIII).
+
+> The talk figures are from **2019**: use them for the ideas, the docs for today's API.
+> Borrowed figures are credited on each slide for teaching use. Check each source's terms before publishing the slides outside the course.
+
+---
+
 
 <!-- _class: lead -->
 <!-- _paginate: false -->
