@@ -198,6 +198,11 @@ Spend transistor budget on *more arithmetic units*.
 
 ---
 
+**Reproduce this table on any machine**
+ `week06/01_gpu_info.py` prints device properties from the live GPU. 
+
+---
+
 ## Tensor Cores: why the AI numbers are insane
 
 CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per cycle.**
@@ -335,6 +340,27 @@ Grid 4 × blockDim 8 → 32 threads → elements 0..31 handled simultaneously.
 
 ---
 
+## Worked example: `c = a + b` for 1,000,000 elements
+
+You write **one line of "what a thread does"**; the launch config supplies the parallelism:
+
+```text
+thread's job:        i = blockIdx.x * blockDim.x + threadIdx.x
+                     if i < N:  c[i] = a[i] + b[i]
+
+launch config:       blockDim  = 256 threads      (a handy default; max is 1024)
+                     gridDim  = ceil(N / 256) = 3907 blocks
+```
+
+- Every one of the 1M threads runs the *same two lines* — on its own `i`.
+- The GPU needs **3907 blocks ÷ 40 SMs ≈ 98 blocks per SM**, scheduled as SMs free up.
+- No loop, no pool, no GIL: the *launch* is the only Python work.
+
+> Same recipe for ReLU, sigmoid, bias add: the launch config never changes —
+> only the thread's two lines do.
+
+---
+
 ## Warps: the unit of actual execution
 
 - Threads run in **warps: groups of 32** that execute in lockstep on an SM
@@ -345,6 +371,26 @@ Grid 4 × blockDim 8 → 32 threads → elements 0..31 handled simultaneously.
 
 > For today's library-level GPU use (CuPy) you don't manage warps — but in Week 8 kernels
 > this will be your first optimisation lever.
+
+---
+
+## Divergence, with numbers
+
+A warp = 32 threads in lockstep. When they disagree, the GPU runs **both** paths and masks the losers:
+
+```text
+# 32-thread warp, values 0..31
+if i % 2 == 0:
+    c[i] = sqrt(a[i])     # 16 threads active, 16 masked (idle)
+else:
+    c[i] = log(a[i])      # the other 16 active, first 16 idle
+```
+
+- Cost ≈ `sqrt time + log time`, not `max(sqrt, log)`.
+- A branch on *data* (like above) hurts; a branch on a *uniform* value
+  (same for the whole warp, e.g. `if training:`) is nearly free.
+
+> Rule of thumb for Week 8: keep branches **warp-uniform** where you can.
 
 ---
 
@@ -408,6 +454,10 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 
 ---
 
+Example code: `week06/03_cupy_elementwise.py` prints GB/s used vs the T4's 320 GB/s 
+
+---
+
 ![w:900](img/w06-roofline.svg)
 
 ---
@@ -423,10 +473,17 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 | Download C | 64 MB | ~5 ms |
 | NumPy on Colab's 2 cores | 137 GFLOP at ~50–100 GFLOP/s | **1.5–3 s** |
 
-> Typical figures from the T4 specs, not measurements: you will measure your own in notebook C3.
+> Typical figures from the T4 specs, not measurements
 > ≈ 50 ms end-to-end vs seconds. Now **n = 128**: the matmul is ~0.02 ms but every
 > call costs launch + transfer latency. Crossover depends on *both* devices:
-> a slow 2-core CPU moves it down, a 32-core workstation moves it up. **Measure, don't guess.**
+> a slow 2-core CPU moves it down, a 32-core workstation moves it up. 
+
+---
+
+**Measure, don't guess.**
+
+**Example code**: `week06/02_cupy_matmul_benchmark.py` (sweep) 
+and `week06/06_crossover_finder.py` (finds the crossover n).
 
 
 ---
@@ -444,7 +501,7 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 |---|---|
 | `np.array(...)`, `np.zeros(...)` | `cp.array(...)`, `cp.zeros(...)` |
 | `a @ b`, `a.sum()`, slicing | **identical syntax** |
-| `np.linalg.svd` | `cp.linalg.svd` |
+| `np.linalg.svd` | `cp.linalg.svd` (→ `week06/05_cupy_vs_numpy_svd.py`) |
 | result on CPU | result on GPU until `cp.asnumpy(x)` / `x.get()` |
 | `float32`/`float64` dtypes | prefer `float32` (native GPU speed) |
 
@@ -491,9 +548,34 @@ cp.cuda.Stream.null.synchronize()     # now we wait for the GPU
 
 ---
 
+## Timing done right: the two correct patterns
+
+```python
+# Pattern 1 — wall clock + explicit sync (fine for e2e, includes transfer)
+t0 = time.perf_counter()
+c = cp.dot(a, b)
+cp.cuda.Stream.null.synchronize()      # REQUIRED before reading the clock
+t_wall = time.perf_counter() - t0
+
+# Pattern 2 — CUDA events (device-side time, no Python noise; best for kernels)
+start = cp.cuda.Event(); end = cp.cuda.Event()
+start.record()
+for _ in range(iters):                # amortise launch overhead too
+    c = cp.dot(a, b)
+end.record(); end.synchronize()
+t_per_call = cp.cuda.get_elapsed_time(start, end) / iters / 1000
+```
+
+❌ `t0=perf_counter(); c=cp.dot(a,b); t=perf_counter()-t0` — times only the **launch** (~20 µs),
+a constant no matter how big the matmul is. This is notebook cell C3's first task.
+
+<!-- _footer: "Full benchmark with both patterns: week06/02_cupy_matmul_benchmark.py" -->
+
+---
+
 ## Transfers and dtypes: two silent costs
 
-**Transfers** (notebook C4): a tiny array pays ~10–50 µs fixed latency; big arrays approach PCIe bandwidth.
+**Transfers**: a tiny array pays ~10–50 µs fixed latency; big arrays approach PCIe bandwidth.
 
 ```python
 for batch in loader:
@@ -506,6 +588,10 @@ A T4 has 1/32 as many FP64 units as FP32: the same matmul is **many times slower
 
 > **Hidden syncs:** `float(loss)` every step forces a GPU→CPU round trip.
 > Accumulate on the device, read **once per epoch**.
+
+---
+
+**Example code**: `week06/04_transfer_overhead.py`
 
 ---
 
@@ -522,6 +608,21 @@ def sigmoid_fused(x):
 - Element-wise ops are **bandwidth-bound** (roofline slide): fewer trips = faster.
 - In **Week 8** you will write such kernels yourself (Numba CUDA).
 - PyTorch's `torch.compile` fuses automatically.
+
+---
+
+## Common pitfalls & what the error looks like
+
+| Pitfall | Symptom / error | Fix |
+|---|---|---|
+| Timing without `synchronize()` | every op "takes" ~20 µs | sync or CUDA events before reading the clock |
+| `float64` by default | everything ~10–30× slower, VRAM doubles | `.astype(np.float32)` **once**, at load |
+| Upload/download in the loop | GPU shows low utilisation, step time flat | move data once, slice on device |
+| `float(loss)` per step | training *slower* than CPU version | accumulate on device, read per epoch |
+| Small arrays on GPU | slower than NumPy | crossover: compute must ≫ transfer + launch |
+| Reading `nvidia-smi` mid-run | memory looks "leaked" | CuPy memory pool keeps freed blocks — `cp.get_default_memory_pool().free_all_blocks()` |
+
+> Six rows, all variants of one idea: **the cost ladder decides everything.**
 
 ---
 
@@ -547,6 +648,23 @@ def sigmoid_fused(x):
 
 - MNIST: 60,000 images → a **60,000 × 784** matrix. MLP 784 → 512 → 10.
 - One training step: **5 matmuls** + cheap element-wise work. Epoch = 234 steps (batch 256).
+
+---
+
+## Notebook roadmap: `week06/lab_week06_train_mlp_gpu.ipynb`
+
+| Part | Content | Course callback | ~time |
+|---|---|---|---|
+| 0 | Setup, GPU check, `nvidia-smi` | Week 6 spec sheet | 2 min |
+| A | CPU baseline: practical peak, BLAS threads | Weeks 1–2 (measure, FLOPs, BLAS) | 5 min |
+| B | NumPy MLP: forward, finite-diff gradient check, train | Week 2 (vectorise, stable softmax) | 10 min |
+| C | CuPy basics: matmul sweep, transfers, float64 trap | Week 6 (today's Parts IV–VI) | 10 min |
+| D | Same network on GPU + batch/width sweep + 3 mistakes | Amdahl, cost ladder | 10 min |
+| E | PyTorch version, autograd check, mixed-precision peek | Forward pointer to Weeks 9–12 | 10 min |
+| F | Summary table (NumPy/CuPy/PyTorch × CPU/GPU) | the review, in numbers | 2 min |
+
+> Parts A–B are pure Weeks 1–2 review — if those feel rusty, this is where you catch up.
+> Exercises E-1…E-5 at the end of the notebook are the homework set.
 
 ---
 
@@ -698,7 +816,7 @@ $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1
 
 ## 🛠 Review lab: notebook Parts A–B
 
-Open **`week6/lab_week06_train_mlp_gpu.ipynb`** in Colab → Runtime → **T4 GPU** → run Part 0, A and B.
+Open **`week06/lab_week06_train_mlp_gpu.ipynb`** in Colab → Runtime → **T4 GPU** → run Part 0, A and B.
 
 Write down (📝 cells):
 1. CPU practical peak, GFLOP/s (A1)
@@ -720,7 +838,6 @@ Write down (📝 cells):
 **Submit:** results table + one sentence: *"On a T4, training this MLP on the GPU is worthwhile when … because …"*
 
 > Homework: `lab_week06_cupy.ipynb` (benchmarks) and exercises E-1 … E-5 at the end of the notebook.
-
 
 ---
 
@@ -842,38 +959,50 @@ One 4096² matmul on the T4:
 
 ---
 
-## Why this notebook (and not another)?
-
-| Option | Verdict |
-|---|---|
-| **NumPy → CuPy → PyTorch on one MLP** | ✔ chosen: every line is a matrix op from Weeks 1–5; the GPU move is one argument; PyTorch last |
-| scikit-learn / cuML | hides the matrices; students learn an API, not the machine |
-| PyTorch only | autograd hides what the GPU is actually speeding up |
-| JAX (`jit`, `grad`) | elegant but a new paradigm; later topic |
-| Numba CUDA kernels | Week 8: needs this week's mental model first |
-
-> Principle: **write it by hand once, then let the framework do it.**
-
----
-
 <!-- _class: lead -->
 
 # Part VIII
-# Midterm Review
+# Midterm Theory Review
+### format · coverage · how to prepare
 
 ---
 
-## Coverage and key formulas
+## Exam format at a glance
 
-| Week | Must know | Week | Must know |
-|---|---|---|---|
-| 1 | profiling, FLOPS vs GB/s | 4 | GIL, pools, async, I/O vs CPU-bound |
-| 2 | vectorise, broadcast, `@njit` | 5 | partitioning, granularity, Dask vs Ray, comm cost |
-| 3 | threads/processes, races, locks | 6 | CPU vs GPU, SIMT, transfer, CuPy basics |
+- **Coverage:** Weeks 1–6 (today included: hardware, SIMT, transfers, CuPy basics)
+- **Duration:** ~90 minutes
+- **Format:** short conceptual answers · one code-analysis question · one design question
+- **Aids:** the formula sheet (next slide) is provided — you must know *when* to apply each formula
+- **No heavy coding from scratch** — but you must *read* code fluently and spot bottlenecks
 
-$$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}} \qquad \text{GFLOP/s}=\frac{2n^3}{t\cdot10^9}$$
+> The exam tests the **decision frameworks**, not memorised API names.
 
-**Format:** short answers + one code-analysis + one design question · ~90 min · formula sheet provided
+---
+
+## Key formula sheet (provided in the exam)
+
+$$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}$$
+
+$$\text{GFLOP/s}=\frac{2n^3}{t\cdot 10^{9}} \qquad \text{arithmetic intensity}=\frac{\text{FLOPs}}{\text{bytes moved}} \quad(\text{matmul } n\times n:\ n/6)$$
+
+$$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3,\ \ t_{transfer}\propto n^2$$
+
+**Estimation drills worth practising:** FLOPs of a layer (2·B·a·b), bytes of a float32 array, transfer time over ~12–50 GB/s, "is this workload compute- or bandwidth-bound?"
+
+---
+
+## What you must be able to *do*, per week
+
+| Week | Skill, not topic |
+|---|---|
+| 1 | profile a script, locate the hot line, compute achieved GFLOP/s vs peak |
+| 2 | rewrite a Python loop as vectorised NumPy; say when Numba beats hand-vectorising |
+| 3 | spot a race condition; choose lock/semaphore/queue for a pattern; explain why `Pool` pickles |
+| 4 | given a workload, pick threads vs processes vs async, and justify with the GIL |
+| 5 | partition a task, size the granularity, apply Amdahl *with* communication |
+| 6 | decide CPU vs GPU from arithmetic intensity; time GPU code correctly; avoid the float64/upload/sync traps |
+
+> Test yourself: can you do each row from a blank page in ~2 minutes?
 
 ---
 
@@ -932,6 +1061,16 @@ $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1
 
 ---
 
+## How to prepare this week
+
+1. **Re-run** the review notebook Parts A–F — the exam's code-analysis question looks exactly like D2's three mistakes.
+2. **Re-derive** (don't reread): stable softmax, `2n³` FLOP count, Amdahl with `f_c`.
+3. **Redo** the Week 6 quiz from Part VII cold — all 5 answers should be instant.
+4. **Skim** your Week 5 granularity results — a Dask-vs-Ray justification question is likely.
+5. Bring questions to the review hour — the design question rewards *reasoned trade-offs*, not one right answer.
+
+---
+
 <!-- _class: lead -->
 <!-- _paginate: false -->
 
@@ -955,4 +1094,4 @@ $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1
 - Colab GPU FAQ: research.google.com/colaboratory/faq
 - Roofline model: Williams, Waterman, Patterson, *Communications of the ACM* 52(4), 2009
 
-Figures `w06-*.svg` are course-generated (see img/CREDITS.md and `week6/make_figures.py`).
+Figures `w06-*.svg` are course-generated (see img/CREDITS.md and `week06/make_figures.py`).
