@@ -4,7 +4,7 @@
 It trains one 784-512-10 MLP on MNIST, written as matrices, and carries it through the course so far; it is the running example of the Week 1–6 review (deck Part VII).
 
 
-`lab_week06_cupy.ipynb` is the benchmark-only lab (matmul sweep, ReLU, transfer trap, SVD). It overlaps with Part C;
+`lab_week06_cupy.ipynb` is the benchmark-only lab (matmul sweep, ReLU, transfer trap, SVD). It overlaps with Part C; use it as homework or an extra.
 
 ## Scripts (class demos for the benchmark lab)
 

@@ -42,7 +42,7 @@ if __name__ == "__main__":
         print(f"n={n:>6} | NumPy {t_np:8.4f} s | CuPy e2e {t_gpu:8.4f} s | winner: {winner}")
         if t_gpu < t_np:
             print(f"\n=> crossover found: n ≈ {n} "
-                  f"(transfer cost at this n: {3*n*n*4/25e9*1e3:.2f} ms over PCIe4)")
+                  f"(transfer cost at this n: {3*n*n*4/12e9*1e3:.2f} ms at ~12 GB/s, a T4's PCIe 3.0)")
             break
         n *= 2
     else:
