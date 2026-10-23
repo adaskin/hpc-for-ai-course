@@ -43,7 +43,9 @@ if __name__ == "__main__":
                   use_cuda_events=True)
     print(f"ReLU   10M floats | NumPy {t_np*1e3:7.3f} ms | CuPy {t_gpu*1e3:7.3f} ms | {t_np/t_gpu:5.1f}x")
 
-    # --- Sigmoid: 1 / (1 + exp(-x)) — two ops fused? No: three separate kernels ---
+    relu_gpu_s = t_gpu          # remember the ReLU time for the bandwidth check below
+
+    # --- Sigmoid: 1 / (1 + exp(-x)) — four separate kernels (neg, exp, add, divide) ---
     t_np = bench(lambda: 1.0 / (1.0 + np.exp(-x_cpu)),
                  warmup=lambda: 1.0 / (1.0 + np.exp(-x_cpu)))
     t_gpu = bench(lambda: 1.0 / (1.0 + cp.exp(-x_gpu)),
@@ -51,6 +53,16 @@ if __name__ == "__main__":
                   use_cuda_events=True)
     print(f"Sigmoid 10M floats | NumPy {t_np*1e3:7.3f} ms | CuPy {t_gpu*1e3:7.3f} ms | {t_np/t_gpu:5.1f}x")
 
-    # Bandwidth sanity check: element-wise ops are memory-bound.
-    bw = N * 4 / t_gpu / 1e9  # read+write ~ 2x this, order of magnitude is what matters
-    print(f"Approximate device bandwidth used: {bw:.0f} GB/s (T4 peak ~320 GB/s)")
+    # --- Sigmoid again, fused into ONE kernel with cp.fuse (preview of Week 8) ---
+    @cp.fuse()
+    def sigmoid_fused(x):
+        return 1.0 / (1.0 + cp.exp(-x))
+
+    t_fused = bench(lambda: sigmoid_fused(x_gpu),
+                    warmup=lambda: sigmoid_fused(x_gpu),
+                    use_cuda_events=True)
+    print(f"Sigmoid fused      | NumPy {t_np*1e3:7.3f} ms | CuPy {t_fused*1e3:7.3f} ms | {t_np/t_fused:5.1f}x")
+
+    # Bandwidth sanity check: ReLU is memory-bound (it reads and writes every float once).
+    bw = 2 * N * 4 / relu_gpu_s / 1e9
+    print(f"ReLU memory traffic: {bw:.0f} GB/s (T4 peak ~320 GB/s)")

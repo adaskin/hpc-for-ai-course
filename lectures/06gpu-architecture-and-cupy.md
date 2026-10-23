@@ -75,9 +75,9 @@ Week 10–11: Many GPUs                 (DDP, model parallelism)
 | VI | How do I use a GPU from Python without writing CUDA? (CuPy) |
 | VII | **Review of Weeks 1–6** with one MNIST network, taken from NumPy to the GPU in a Colab notebook |
 
-> **No CUDA knowledge needed for this week**. 
-> we will take **one neural network**, written as matrices in NumPy, and move it to the GPU by changing the array library, 
-> then measure *when* and *why* it gets faster.
+> **No CUDA knowledge needed for this week.**
+> We will take **one neural network**, written as matrices in NumPy, and move it to the GPU
+> by changing the array library, then measure *when* and *why* it gets faster.
 
 ---
 
@@ -187,19 +187,13 @@ Spend transistor budget on *more arithmetic units*.
 | Spec | T4 | What it means for us |
 |---|---|---|
 | SMs × cores | 40 × 64 = **2,560** CUDA cores | how many multiply-adds per cycle |
-| Peak FP32 | **~8 TFLOP/s** | upper bound for float32 matmul (we reach ~half) |
+| Peak FP32 | **~8 TFLOP/s** | float32 matmul bound (we reach ~half; 70 W throttles) |
 | Peak FP64 | ~0.25 TFLOP/s (1/32) | **never use float64 here** |
 | Tensor Cores FP16 | **~65 TFLOP/s** | mixed precision, Week 12 |
 | Memory | **16 GB**, 320 GB/s | model + activations must fit |
 | Link to CPU | **PCIe 3.0 ×16**, ~12 GB/s in practice | every upload/download crosses this |
-| Power | 70 W | it throttles: expect < peak |
 
-> You will confirm these numbers in the notebook with `nvidia-smi` and device properties.
-
----
-
-**Reproduce this table on any machine**
- `week06/01_gpu_info.py` prints device properties from the live GPU. 
+> 📁 `week06/01_gpu_info.py`: name, memory, SMs, capability
 
 ---
 
@@ -449,12 +443,7 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 | sigmoid (fused kernel) | ~0.5 | bandwidth-bound |
 | matmul n×n | 2n³ / 12n² = **n/6** | n = 64: 11 · n = 512: 85 · n = 4096: 683 → **compute-bound** |
 
-> This is why matmul is the GPU's star, why element-wise ops get "only" 5–30×,
-> and why **kernel fusion** (do many ops per memory trip) matters.
-
----
-
-Example code: `week06/03_cupy_elementwise.py` prints GB/s used vs the T4's 320 GB/s 
+> 📁 `week06/03_cupy_elementwise.py` (10M-element ReLU, sigmoid and fused sigmoid)
 
 ---
 
@@ -473,18 +462,12 @@ Example code: `week06/03_cupy_elementwise.py` prints GB/s used vs the T4's 320 G
 | Download C | 64 MB | ~5 ms |
 | NumPy on Colab's 2 cores | 137 GFLOP at ~50–100 GFLOP/s | **1.5–3 s** |
 
-> Typical figures from the T4 specs, not measurements
+> Typical figures from the T4 specs, not measurements.
 > ≈ 50 ms end-to-end vs seconds. Now **n = 128**: the matmul is ~0.02 ms but every
 > call costs launch + transfer latency. Crossover depends on *both* devices:
-> a slow 2-core CPU moves it down, a 32-core workstation moves it up. 
-
----
-
-**Measure, don't guess.**
-
-**Example code**: `week06/02_cupy_matmul_benchmark.py` (sweep) 
-and `week06/06_crossover_finder.py` (finds the crossover n).
-
+> a slow 2-core CPU moves it down, a 32-core workstation moves it up. **Measure, don't guess.**
+>
+> 📁 `week06/02_cupy_matmul_benchmark.py` (sweep) · `week06/06_crossover_finder.py` (finds the crossover n)
 
 ---
 
@@ -506,6 +489,8 @@ and `week06/06_crossover_finder.py` (finds the crossover n).
 | `float32`/`float64` dtypes | prefer `float32` (native GPU speed) |
 
 ---
+
+## A first CuPy program
 
 ```python
 import numpy as np, cupy as cp
@@ -567,7 +552,7 @@ t_per_call = cp.cuda.get_elapsed_time(start, end) / iters / 1000
 ```
 
 ❌ `t0=perf_counter(); c=cp.dot(a,b); t=perf_counter()-t0` — times only the **launch** (~20 µs),
-a constant no matter how big the matmul is. This is notebook cell C3's first task.
+a constant no matter how big the matmul is. This is the timing trap in notebook C2.
 
 <!-- _footer: "Full benchmark with both patterns: week06/02_cupy_matmul_benchmark.py" -->
 
@@ -588,10 +573,8 @@ A T4 has 1/32 as many FP64 units as FP32: the same matmul is **many times slower
 
 > **Hidden syncs:** `float(loss)` every step forces a GPU→CPU round trip.
 > Accumulate on the device, read **once per epoch**.
-
----
-
-**Example code**: `week06/04_transfer_overhead.py`
+>
+> 📁 `week06/04_transfer_overhead.py`: upload bandwidth vs size, and a tiny ReLU that is slower on the GPU.
 
 ---
 
@@ -613,16 +596,20 @@ def sigmoid_fused(x):
 
 ## Common pitfalls & what the error looks like
 
+<style scoped>
+  table { font-size: 18px; }
+</style>
+
 | Pitfall | Symptom / error | Fix |
 |---|---|---|
 | Timing without `synchronize()` | every op "takes" ~20 µs | sync or CUDA events before reading the clock |
-| `float64` by default | everything ~10–30× slower, VRAM doubles | `.astype(np.float32)` **once**, at load |
+| `float64` by default | VRAM doubles; up to ~32× slower on a T4 | `.astype(np.float32)` **once**, at load |
 | Upload/download in the loop | GPU shows low utilisation, step time flat | move data once, slice on device |
-| `float(loss)` per step | training *slower* than CPU version | accumulate on device, read per epoch |
+| `float(loss)` per step | GPU idles while Python waits | accumulate on device, read per epoch |
 | Small arrays on GPU | slower than NumPy | crossover: compute must ≫ transfer + launch |
-| Reading `nvidia-smi` mid-run | memory looks "leaked" | CuPy memory pool keeps freed blocks — `cp.get_default_memory_pool().free_all_blocks()` |
+| Reading `nvidia-smi` mid-run | memory looks "leaked" | CuPy's memory pool keeps freed blocks (`free_all_blocks()`) |
 
-> Six rows, all variants of one idea: **the cost ladder decides everything.**
+> All variants of one idea: **the cost ladder decides everything.**
 
 ---
 
@@ -644,27 +631,27 @@ def sigmoid_fused(x):
 # Part VII
 # Review (Weeks 1–6): One MNIST Network
 
-![w:1000](img/w06-mlp-as-matrices.svg)
-
-- MNIST: 60,000 images → a **60,000 × 784** matrix. MLP 784 → 512 → 10.
-- One training step: **5 matmuls** + cheap element-wise work. Epoch = 234 steps (batch 256).
-
 ---
 
-## Notebook roadmap: `week06/lab_week06_train_mlp_gpu.ipynb`
+## Notebook roadmap
 
-| Part | Content | Course callback | ~time |
+<style scoped>
+  table { font-size: 18px; }
+</style>
+
+File: `week06/lab_week06_train_mlp_gpu.ipynb`
+
+| Part | Content | Course callback | |
 |---|---|---|---|
-| 0 | Setup, GPU check, `nvidia-smi` | Week 6 spec sheet | 2 min |
-| A | CPU baseline: practical peak, BLAS threads | Weeks 1–2 (measure, FLOPs, BLAS) | 5 min |
-| B | NumPy MLP: forward, finite-diff gradient check, train | Week 2 (vectorise, stable softmax) | 10 min |
-| C | CuPy basics: matmul sweep, transfers, float64 trap | Week 6 (today's Parts IV–VI) | 10 min |
-| D | Same network on GPU + batch/width sweep + 3 mistakes | Amdahl, cost ladder | 10 min |
-| E | PyTorch version, autograd check, mixed-precision peek | Forward pointer to Weeks 9–12 | 10 min |
-| F | Summary table (NumPy/CuPy/PyTorch × CPU/GPU) | the review, in numbers | 2 min |
+| 0 | Setup, GPU check, `nvidia-smi` | Week 6 spec sheet | 2 |
+| A | CPU warm-up: FLOPs and practical peak, loop vs Numba vs BLAS, stable softmax, BLAS threads | Weeks 1–4 | 5 |
+| B | NumPy MLP: forward/backward, gradient check, train, sharded gradients, Amdahl profile | Weeks 1, 2, 5 | 10 |
+| C | CuPy basics: matmul sweep, transfers, float64 trap | Week 6 (today's Parts IV–VI) | 10 |
+| D | Same network on GPU + batch/width sweep + 3 mistakes | Amdahl, cost ladder | 10 |
+| E | PyTorch version, autograd check, mixed-precision peek | Forward pointer to Weeks 9–12 | 10 |
+| F | Summary table (NumPy/CuPy/PyTorch × CPU/GPU) | the review, in numbers | 2 |
 
-> Parts A–B are pure Weeks 1–2 review — if those feel rusty, this is where you catch up.
-> Exercises E-1…E-5 at the end of the notebook are the homework set.
+> Parts A–B: Weeks 1–5 review. Exercises E-1…E-5: homework.
 
 ---
 
@@ -708,7 +695,7 @@ $$\text{GFLOP/s}=\frac{\text{FLOPs}}{t\cdot 10^{9}} \qquad\text{compare with the
 ## Week 2: vectorise, don't loop
 
 ```python
-# Python triple loop vs Numba loop vs BLAS (n = 1024)
+# Python triple loop vs Numba loop vs BLAS (n = 1024; typical, yours will differ)
 matmul_python(A, B)     # ~minutes. Interpreter overhead per multiply
 matmul_numba(A, B)      # ~0.2 s.   Compiled loop, no BLAS tricks
 A @ B                   # ~0.01 s.  Tuned BLAS: tiles, SIMD, all cores
@@ -785,7 +772,7 @@ avg    = sum(grads) / 4                                    # move + wait = all-r
 $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}$$
 
 - **Granularity:** tasks must be big compared with their overhead (Dask: ~1 ms per task!).
-- **Notebook B6:** on the CPU, 5 matmuls take ~60 % of a step. If *only* matmul were
+- **Notebook B6:** on our test CPU, 5 matmuls took ~60 % of a step (measure yours). If *only* matmul were
   infinitely fast, Amdahl caps the speedup at 1/(1−0.6) ≈ **2.5×**.
 
 > The GPU escapes this cap by running **everything** on the device (element-wise work
@@ -830,14 +817,14 @@ Write down (📝 cells):
 
 ## 🛠 Lab: the same network on the GPU (notebook C → F)
 
-1. **C3** matmul sweep → crossover size (📝)
-2. **C4–C5** transfer cost, float64 trap
+1. **C1–C2** hello CuPy, the timing trap (📝)
+2. **C3** matmul sweep → crossover size (📝); **C4–C5** transfer cost, float64 trap
 3. **D** train on the GPU → speedup (📝); **D1** sweep heat-map; **D2** three mistakes
 4. **E–F** PyTorch and the summary table
 
 **Submit:** results table + one sentence: *"On a T4, training this MLP on the GPU is worthwhile when … because …"*
 
-> Homework: `lab_week06_cupy.ipynb` (benchmarks) and exercises E-1 … E-5 at the end of the notebook.
+> Homework: `lab_week06_cupy.ipynb` and exercises E-1 … E-5.
 
 ---
 
