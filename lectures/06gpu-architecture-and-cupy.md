@@ -75,9 +75,9 @@ Week 10–11: Many GPUs                 (DDP, model parallelism)
 | VI | How do I use a GPU from Python without writing CUDA? (CuPy) |
 | VII | **Review of Weeks 1–6** with one MNIST network, taken from NumPy to the GPU in a Colab notebook |
 
-> **No CUDA knowledge needed.** You will not write a single kernel this week.
-> You will take **one neural network**, written as matrices in NumPy, and move it to the GPU
-> by changing the array library, then measure *when* and *why* it gets faster.
+> **No CUDA knowledge needed for this week**. 
+> we will take **one neural network**, written as matrices in NumPy, and move it to the GPU by changing the array library, 
+> then measure *when* and *why* it gets faster.
 
 ---
 
@@ -87,7 +87,6 @@ Week 10–11: Many GPUs                 (DDP, model parallelism)
 
 - MNIST: 60,000 images → a **60,000 × 784** matrix. MLP 784 → 512 → 10.
 - One training step: **5 matmuls** + cheap element-wise work. Epoch = 234 steps (batch 256).
-- Everything on this slide is something you already know from Weeks 1–5.
 
 ---
 
@@ -449,6 +448,8 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 | result on CPU | result on GPU until `cp.asnumpy(x)` / `x.get()` |
 | `float32`/`float64` dtypes | prefer `float32` (native GPU speed) |
 
+---
+
 ```python
 import numpy as np, cupy as cp
 
@@ -541,6 +542,11 @@ def sigmoid_fused(x):
 
 # Part VII
 # Review (Weeks 1–6): One MNIST Network
+
+![w:1000](img/w06-mlp-as-matrices.svg)
+
+- MNIST: 60,000 images → a **60,000 × 784** matrix. MLP 784 → 512 → 10.
+- One training step: **5 matmuls** + cheap element-wise work. Epoch = 234 steps (batch 256).
 
 ---
 
