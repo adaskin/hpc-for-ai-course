@@ -1048,15 +1048,6 @@ $$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3
 
 ---
 
-## How to prepare this week
-
-1. **Re-run** the review notebook Parts A–F — the exam's code-analysis question looks exactly like D2's three mistakes.
-2. **Re-derive** (don't reread): stable softmax, `2n³` FLOP count, Amdahl with `f_c`.
-3. **Redo** the Week 6 quiz from Part VII cold — all 5 answers should be instant.
-4. **Skim** your Week 5 granularity results — a Dask-vs-Ray justification question is likely.
-5. Bring questions to the review hour — the design question rewards *reasoned trade-offs*, not one right answer.
-
----
 
 <!-- _class: lead -->
 <!-- _paginate: false -->
