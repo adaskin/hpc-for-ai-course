@@ -4,7 +4,7 @@
 
 **Format:** Groups of 2  
 **Deliverables:** Report (10-15 pages, PDF) &middot; In-class presentation (15 min + 5 min Q&A) &middot; Code repository (GitHub)  
-**Weight:** 30% of course grade (20% report + 10% presentation)
+**Weight:** 15% of course grade (10% report + 5% presentation)
 
 ---
 
