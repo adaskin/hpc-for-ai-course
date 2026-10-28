@@ -161,6 +161,18 @@ Spend transistor budget on *more arithmetic units*.
 
 ---
 
+
+![alt text](img/w06-3.png)
+
+---
+![alt text](img/w06-2.png)
+
+The GPU Devotes More Transistors to Data Processing
+https://docs.nvidia.com/cuda/cuda-c-programming-guide/
+
+---
+
+
 <!-- _class: lead -->
 
 # Part II
@@ -178,17 +190,20 @@ Spend transistor budget on *more arithmetic units*.
   - small **shared memory** + register file (Week 8 territory)
 - A hardware **GigaThread engine** assigns blocks to SMs as they become free
 
-<!-- _footer: "NVIDIA CUDA C Programming Guide, ch. 2: https://docs.nvidia.com/cuda/cuda-c-programming-guide/" -->
 
 ---
+![](img/w06-1.png)
+
+---
+
 
 ## Reading a spec sheet: the T4 in Colab
 
 | Spec | T4 | What it means for us |
-|---|---|---|
+| --- | --- | --- |
 | SMs × cores | 40 × 64 = **2,560** CUDA cores | how many multiply-adds per cycle |
-| Peak FP32 | **~8 TFLOP/s** | float32 matmul bound (we reach ~half; 70 W throttles) |
-| Peak FP64 | ~0.25 TFLOP/s (1/32) | **never use float64 here** |
+| Peak FP32 | **~8 TFLOP/s** | an upper bound; real matmul performance is lower |
+| Peak FP64 | ~0.25 TFLOP/s (1/32) | avoid **accidental** float64 in this workload |
 | Tensor Cores FP16 | **~65 TFLOP/s** | mixed precision, Week 12 |
 | Memory | **16 GB**, 320 GB/s | model + activations must fit |
 | Link to CPU | **PCIe 3.0 ×16**, ~12 GB/s in practice | every upload/download crosses this |
@@ -202,15 +217,14 @@ Spend transistor budget on *more arithmetic units*.
 CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per cycle.**
 
 | Generation | Flagship | Tensor peak (dense) | New capability |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Volta (2017) | V100 | 125 TFLOPS FP16 | 1st Tensor Core |
 | **Turing (2018)** | **T4 ← our Colab GPU** | ~65 TFLOPS FP16 | INT8/INT4 inference |
 | Ampere (2020) | A100 | 312 TFLOPS FP16/BF16 | BF16, TF32, sparsity |
 | Hopper (2022) | H100 | ~990 TFLOPS FP16 | **Transformer Engine (FP8)** |
 | Blackwell (2024–25) | B200 | ~2,250 TFLOPS FP16, ~9,000 FP4 | FP4, 208 B transistors |
 
-> Peak tensor throughput ≠ usable throughput — Week 12 (mixed precision) revisits this.
-> Vendor headline numbers often quote the *sparse* figure (2× the dense ones above).
+<!-- Teaching cue: peak is not achieved throughput; sparse headlines can be 2× dense. Mixed precision returns in Week 12. -->
 
 ---
 
@@ -222,8 +236,8 @@ CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per
 
 ## GPU memory technology: GDDR vs HBM
 
-| | GDDR (graphics card) | HBM (datacenter) |
-|---|---|---|
+|  | GDDR (graphics card) | HBM (datacenter) |
+| --- | --- | --- |
 | Where | RTX 4090/5090, T4 | A100, H100, B200 |
 | Trick | very fast signalling, wide-ish bus | **stacked dies** next to GPU (2.5D packaging), 4096+ bit bus |
 | Bandwidth | 0.3–1.8 TB/s | 2.0–8 TB/s |
@@ -237,7 +251,7 @@ CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per
 ## Getting data between chips: PCIe vs NVLink
 
 | Link | Bandwidth | Used for |
-|---|---|---|
+| --- | --- | --- |
 | PCIe 3.0 x16 | ~12–16 GB/s | CPU ↔ GPU on the **T4 (Colab)** |
 | PCIe 4.0 x16 | ~25–32 GB/s | CPU ↔ GPU on RTX 30/40, A100 |
 | PCIe 5.0 x16 | ~50–64 GB/s | newer CPU ↔ GPU |
@@ -252,6 +266,7 @@ CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per
 <!-- _class: lead -->
 
 # Part III
+
 # Core Technologies: the CUDA Stack
 
 ---
@@ -263,10 +278,13 @@ CUDA cores do one FP32 FMA per cycle. **Tensor Cores do a whole small matmul per
 ## The stack, bottom-up
 
 **CUDA (Compute Unified Device Architecture)** — NVIDIA's platform:
+
 - programming model (kernels, threads, memory) + compiler (`nvcc`) + runtime + drivers
-- you almost never touch it directly from Python — libraries call it for you
+- a **kernel** is a function executed by many GPU threads; today, libraries launch kernels for us
+- you almost never touch CUDA directly from Python — libraries call it for you
 
 **CUDA libraries** — the "BLAS of the GPU" (cf. Week 2!):
+
 - **cuBLAS** — matmul, GEMM (what `a @ b` calls on GPU)
 - **cuDNN** — convolutions, attention, normalization primitives for deep learning
 - **NCCL** — collective communication for multi-GPU (Weeks 10–11)
@@ -290,13 +308,15 @@ your Python code
 ```
 
 > You have been benefiting from this stack all course: NumPy → OpenBLAS/MKL on CPU is the
-> *same pattern*. GPU = same idea, another backend. This is why CuPy can be a drop-in NumPy.
+> *same pattern*. GPU = same idea, another backend. This is why CuPy can offer a familiar,
+> NumPy-like interface for its supported API.
 
 ---
 
 <!-- _class: lead -->
 
 # Part IV
+
 # The SIMT Execution Model
 
 ---
@@ -311,7 +331,7 @@ One kernel launch creates a **grid** of **blocks** of **threads**:
 - Threads in a block can cooperate (shared memory) and are co-scheduled on one SM
 - Blocks are scheduled independently → the GPU scales from 40 to 170 SMs without code changes
 
-<!-- _footer: "Diagram modelled on NVIDIA CUDA C Programming Guide, 'Thread Hierarchy'." -->
+<!-- _footer: "NVIDIA CUDA C Programming Guide: Thread Hierarchy" -->
 
 ---
 
@@ -326,7 +346,7 @@ c[i] = a[i] + b[i]
 Grid 4 × blockDim 8 → 32 threads → elements 0..31 handled simultaneously.
 
 | block 0 | block 1 | block 2 | block 3 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `i = 0·8 + t` → 0…7 | `i = 1·8 + t` → 8…15 | 16…23 | 24…31 |
 
 > **Connection to Week 3:** data parallelism ("same op, different data") *is* SIMT.
@@ -357,14 +377,38 @@ launch config:       blockDim  = 256 threads      (a handy default; max is 1024)
 
 ## Warps: the unit of actual execution
 
-- Threads run in **warps: groups of 32** that execute in lockstep on an SM
-- The scheduler runs several warps per SM and **switches for free** when one stalls on memory
-  → latency hiding: warps waiting on VRAM don't block warps that are ready
+- Threads are scheduled in **warps: groups of 32**; think of a warp as one instruction stream with 32 active lanes
+- The scheduler keeps several warps resident per SM and switches to ready warps when others stall on memory
+→ latency hiding: warps waiting on VRAM need not block warps that are ready
 - **Divergence warning:** if threads in a warp take different branches (`if/else`),
-  *both* paths execute serially → wasted cycles
+*both* paths execute serially → wasted cycles
 
 > For today's library-level GPU use (CuPy) you don't manage warps — but in Week 8 kernels
 > this will be your first optimisation lever.
+
+---
+
+**Warp Divergence Explained Simply 🚌**
+Think of a warp as a tour bus with 32 passengers (threads). 👥
+- The bus has only one driver (the Warp Scheduler) and one speaker system. 🎙️
+- Because there is only one speaker system:
+	- The driver can only read out one single instruction at a time, and all 32 passengers must listen and do that exact action at the exact same moment (lockstep execution). ⏱️
+
+---
+
+**Scenario A: Uniform Branching (The Ideal Bus) 🟢**
+The driver announces over the speaker: "If you want to go to the amusement park, raise your hand." 🎡
+- Because of how you split your data (or because you are running a uniform training flag), all 32 passengers want to go to the amusement park. 🙌
+- No one disagrees. 🤝
+- **The Result:** The bus goes straight to the park. Total time taken = 1 stop. No time is wasted! ⚡
+
+---
+**Scenario B: Divergent Branching (The Divergent Bus) 🔴**
+The driver announces: "If your passenger ID number is even, we are going to get ice cream (sqrt). Otherwise, we are going to look at museums (log)." 🍦🏛️
+- Suddenly:
+	- 16 passengers want ice cream (even IDs) 🍦
+	- 16 passengers want the museum (odd IDs) 🏛️
+- Because the bus cannot physically split in half, the driver has to serialize the trips: 🔁
 
 ---
 
@@ -382,7 +426,7 @@ else:
 
 - Cost ≈ `sqrt time + log time`, not `max(sqrt, log)`.
 - A branch on *data* (like above) hurts; a branch on a *uniform* value
-  (same for the whole warp, e.g. `if training:`) is nearly free.
+(same for the whole warp, e.g. `if training:`) is nearly free.
 
 > Rule of thumb for Week 8: keep branches **warp-uniform** where you can.
 
@@ -391,7 +435,7 @@ else:
 ## Map our MLP onto threads
 
 | Operation in our training step | Parallelisation |
-|---|---|
+| --- | --- |
 | ReLU on a 256×512 activation | 131,072 threads: `max(0, x)` each |
 | `X @ W1` (256×784 · 784×512) | one thread (or small tile) per output element: 131,072 outputs |
 | softmax over 256 rows | one block per row, reduction inside |
@@ -408,6 +452,7 @@ else:
 <!-- _class: lead -->
 
 # Part V
+
 # GPU Memory: Two Worlds, One Cable
 
 ---
@@ -418,18 +463,28 @@ else:
 
 ## The transfer rules
 
-1. CPU RAM and GPU VRAM are **separate address spaces** — no sharing (by default)
-2. Every upload/download crosses PCIe: **~12–55 GB/s** vs GPU memory at **300–8,000 GB/s**
-3. Kernels are **asynchronous**: launch returns immediately; results appear "later"
-4. All CuPy intermediates stay on GPU — transfer **in once, out once**
+1. By default, NumPy arrays live in **CPU RAM** and CuPy arrays in **GPU VRAM**; ordinary operations do not mix them implicitly.
+2. Every explicit upload/download crosses a link such as PCIe: **~12–55 GB/s** vs GPU memory at **300–8,000 GB/s**.
+3. **Kernel launches are asynchronous with respect to the host**: Python can continue while the GPU works; host transfers may wait.
+4. Operations on CuPy arrays produce CuPy arrays on the GPU — transfer **in once, out once**.
 
-**Amortisation rule (Week 5's cost ladder, revisited):**
-GPU wins when `compute_time ≫ transfer_time`. For an n×n matmul:
+---
 
-- transfer time grows like **n²** (three n×n matrices cross PCIe)
-- compute time grows like **n³** (2n³ FLOPs on-device)
+## Why large matmuls amortise transfers
 
-Small n → transfer dominates → **CPU wins**. Large n → GPU wins by 10–100×.
+**Amortisation rule (Week 5's cost ladder, revisited):** GPU wins when `compute_time ≫ transfer_time`.
+
+For an n×n matmul:
+
+- transfer time grows like **n²**: three n×n matrices cross PCIe;
+- compute time grows like **n³**: 2n³ FLOPs execute on the device.
+
+| Regime | Dominant cost | Likely winner |
+| --- | --- | --- |
+| small n | transfer + launch latency | **CPU** |
+| large n | arithmetic on the GPU | **GPU** |
+
+The exact crossover depends on both devices, so we measure it rather than memorise a size.
 
 ---
 
@@ -438,7 +493,7 @@ Small n → transfer dominates → **CPU wins**. Large n → GPU wins by 10–10
 A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOPs per byte** to stay busy.
 
 | Operation (float32) | FLOP per byte moved | Verdict on a T4 |
-|---|---|---|
+| --- | --- | --- |
 | ReLU `max(0,x)` | 1 / 8 = 0.125 | **bandwidth-bound** (~40 GFLOP/s of 8,000) |
 | sigmoid (fused kernel) | ~0.5 | bandwidth-bound |
 | matmul n×n | 2n³ / 12n² = **n/6** | n = 64: 11 · n = 512: 85 · n = 4096: 683 → **compute-bound** |
@@ -456,7 +511,7 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 `C = A @ B`, float32, **n = 4096**:
 
 | Step | Data / work | Time on a T4 |
-|---|---|---|
+| --- | --- | --- |
 | Upload A and B | 2 × 64 MB at ~12 GB/s | ~10 ms |
 | Matmul | 137 GFLOP at ~4–5 TFLOP/s | **~30 ms** |
 | Download C | 64 MB | ~5 ms |
@@ -466,70 +521,202 @@ A GPU can do **~8 TFLOP/s** but fetch only **320 GB/s** from VRAM: **≈ 25 FLOP
 > ≈ 50 ms end-to-end vs seconds. Now **n = 128**: the matmul is ~0.02 ms but every
 > call costs launch + transfer latency. Crossover depends on *both* devices:
 > a slow 2-core CPU moves it down, a 32-core workstation moves it up. **Measure, don't guess.**
->
+> >
 > 📁 `week06/02_cupy_matmul_benchmark.py` (sweep) · `week06/06_crossover_finder.py` (finds the crossover n)
+
+---
+
+## Checkpoint: the four course questions on one GPU
+
+| Question | GPU answer in this lecture |
+| --- | --- |
+| **Split** | one thread per element, or a tiled matmul over many output elements |
+| **Assign** | the hardware schedules blocks onto SMs |
+| **Move** | `cp.asarray(...)` uploads; `cp.asnumpy(...)` downloads |
+| **Wait** | kernel launches are asynchronous; synchronise when you need a result or a valid timing |
+
+> **Transition:** CuPy hides thread and block management, but it does **not** hide array location,
+> transfers, or asynchronous execution. Those are the three new ideas in the next part.
 
 ---
 
 <!-- _class: lead -->
 
 # Part VI
+
 # CuPy: NumPy on the GPU
 
----
-
-## The API mapping
-
-| NumPy | CuPy |
-|---|---|
-| `np.array(...)`, `np.zeros(...)` | `cp.array(...)`, `cp.zeros(...)` |
-| `a @ b`, `a.sum()`, slicing | **identical syntax** |
-| `np.linalg.svd` | `cp.linalg.svd` (→ `week06/05_cupy_vs_numpy_svd.py`) |
-| result on CPU | result on GPU until `cp.asnumpy(x)` / `x.get()` |
-| `float32`/`float64` dtypes | prefer `float32` (native GPU speed) |
+<!-- Teaching cue: run the small examples live if possible. After each line, ask: “Where does the result live?” -->
 
 ---
 
-## A first CuPy program
+## CuPy basics: `cupy.ndarray`
+
+CuPy is a GPU array backend that implements a **large subset of the NumPy API**.
+Its central type, `cupy.ndarray`, lives in GPU memory; `numpy.ndarray` lives in CPU memory.
 
 ```python
-import numpy as np, cupy as cp
+import numpy as np
+import cupy as cp
 
-a_gpu = cp.asarray(np.random.rand(4096, 4096).astype(np.float32))  # upload once
-b_gpu = a_gpu @ a_gpu                # runs on GPU via cuBLAS
-c_gpu = cp.maximum(b_gpu, 0)         # element-wise kernel, stays on GPU
-result = cp.asnumpy(c_gpu)           # download once
+x_cpu = np.array([1, 2, 3])
+x_gpu = cp.array([1, 2, 3])          # allocated on the current GPU
+
+l2_cpu = np.linalg.norm(x_cpu)       # computed on the CPU
+l2_gpu = cp.linalg.norm(x_gpu)       # computed on the GPU
+```
+
+Familiar operations include `cp.zeros(...)`, `a @ b`, `a.sum()`, slicing, broadcasting, and `cp.linalg.svd(...)`.
+
+> NumPy-like, not complete: check API support when porting.
+
+<!-- _footer: "Official guide: https://docs.cupy.dev/en/stable/user_guide/basic.html" -->
+
+---
+
+## A first CuPy program: follow the data
+
+```python
+import numpy as np
+import cupy as cp
+
+a_cpu = np.random.rand(4096, 4096).astype(np.float32)
+a_gpu = cp.asarray(a_cpu)       # 1. upload: CPU RAM → GPU VRAM
+b_gpu = a_gpu @ a_gpu           # 2. GPU matmul via cuBLAS
+c_gpu = cp.maximum(b_gpu, 0)    # 3. GPU element-wise kernel; stays in VRAM
+result = cp.asnumpy(c_gpu)      # 4. download: GPU VRAM → CPU RAM
+```
+
+At each step, ask two questions:
+
+1. **Where is the array?** `type(a_gpu)` is `cupy.ndarray`; `a_gpu.device` identifies its GPU.
+2. **Where does the work happen?** Operations on CuPy arrays run on the GPU; there is no automatic download for the next operation.
+
+> This example deliberately uploads once and downloads once. The intermediate arrays never cross PCIe.
+
+---
+
+## Data transfer: make every crossing explicit
+
+```python
+x_cpu = np.array([1, 2, 3], dtype=np.float32)
+
+x_gpu = cp.asarray(x_cpu)       # host → current device
+x_cpu_again = cp.asnumpy(x_gpu) # device → host
+x_cpu_again = x_gpu.get()       # equivalent device → host method
+```
+
+- `cp.array(obj)` creates a CuPy array and **copies by default**.
+- `cp.asarray(obj)` moves/converts to the current device, but **avoids a copy** if the input is already a CuPy array there.
+- `cp.asnumpy(x)` and `x.get()` copy device → host and wait for the required device work.
+
+> `cp.asarray` means “give me a device array”, not necessarily “make another copy”.
+
+<!-- _footer: "Official guide: CuPy Basics → Data Transfer" -->
+
+---
+
+## Do not mix NumPy and CuPy arrays implicitly
+
+```python
+x_cpu = np.array([1, 2, 3])
+y_cpu = np.array([4, 5, 6])
+x_gpu = cp.asarray(x_cpu)
+
+x_gpu + y_cpu                   # TypeError: unsupported NumPy input
 ```
 
 ---
 
-## Six rules for porting NumPy code
-
-1. `np.` → `cp.` for creation and math; slicing, `@`, broadcasting are unchanged.
-2. Upload **once** (`cp.asarray`), download **once** (`cp.asnumpy`).
-3. Stay in **`float32`**: NumPy's default `float64` is up to 32× slower on a T4.
-4. GPU calls return **immediately** → synchronise before reading a clock.
-5. Anything that returns a Python number (`float(x)`, `.item()`, `print(x)`, `if x > 0`) **waits for the GPU**.
-6. Write functions as `f(xp, ...)` so one code path serves NumPy **and** CuPy.
+Choose the location explicitly:
 
 ```python
-def relu(xp, x):            # xp is numpy or cupy
+cp.asnumpy(x_gpu) + y_cpu       # both on CPU → NumPy result
+x_gpu + cp.asarray(y_cpu)       # both on GPU → CuPy result
+```
+
+- CuPy does not silently upload a NumPy operand for you.
+- This is helpful: an implicit transfer would hide a potentially expensive PCIe crossing.
+- When debugging, inspect `type(x)` and, for a CuPy array, `x.device`.
+
+> **Rule:** convert first, then compute; keep conversions outside the hot loop.
+
+---
+
+## Current device: where arrays are created and used
+
+With one GPU, the default device is usually all you need. With multiple GPUs, use a device context:
+
+```python
+x_on_gpu0 = cp.array([1, 2, 3])       # current device, normally GPU 0
+
+with cp.cuda.Device(1):
+    x_on_gpu1 = cp.array([1, 2, 3])   # allocated on GPU 1
+    y_on_gpu1 = x_on_gpu1 * 2         # computed on current device (GPU 1)
+
+print(x_on_gpu1.device)               # <CUDA Device 1>
+```
+
+- The **current device** is the default target for allocation and computation.
+- Keep an operation's arrays on the current device; cross-device access may be slow or unavailable.
+- For device-to-device copies, use `cp.asarray` inside the destination device's context.
+
+<!-- _footer: "Official guide: CuPy Basics → Current Device" -->
+
+---
+
+## CPU/GPU-agnostic code
+
+Let the input array choose the backend with `cp.get_array_module(...)`:
+
+```python
+def relu(x):
+    xp = cp.get_array_module(x)   # cupy if x is on GPU; numpy otherwise
     return xp.maximum(x, 0)
 ```
 
----
-
-## Asynchronous execution: why timing lies
-
-![w:950](img/w06-async-timeline.svg)
+Or pass the backend explicitly when the caller already knows it:
 
 ```python
-y = cp.maximum(x, 0)                  # returns in ~20 µs: kernel only queued
-cp.cuda.Stream.null.synchronize()     # now we wait for the GPU
+def relu_with_backend(xp, x):
+    return xp.maximum(x, 0)
 ```
 
-> Correct timing: `synchronize()` (or CUDA events) **before** you read the clock.
-> The same mechanism hides errors: a failing kernel may report on a *later* call.
+Both patterns support one implementation for NumPy and CuPy.
+
+- `get_array_module(x)` suits array-oriented library functions; explicit `xp` is often clearer in a large training program.
+- If inputs are on different devices, transfer them to one location first.
+
+<!-- _footer: "Official guide: CuPy Basics → How to write CPU/GPU agnostic code" -->
+
+---
+
+## Seven rules for porting NumPy code
+
+1. Replace `np.` with `cp.` **only for supported operations**; slicing, `@`, and broadcasting keep their syntax.
+2. Know where every array lives; do not mix NumPy and CuPy operands implicitly.
+3. Upload **once** (`cp.asarray`) and download **once** (`cp.asnumpy` or `.get()`).
+4. Use **`float32`** for this week's T4 workload; NumPy often creates `float64` by default.
+5. Kernel launches are asynchronous → synchronise before reading a clock or host result.
+6. Converting a device scalar to Python (`float(x)`, `.item()`, scalar `if`) waits for the GPU.
+7. Reuse one code path with `cp.get_array_module(x)` or an explicit `xp` backend.
+
+---
+
+## Current stream and asynchronous execution
+
+CuPy queues transfers and kernels on a **current stream**. Work in one stream stays ordered, but the Python host does not wait for each kernel. The default is CUDA's null stream.
+
+![w:650](img/w06-async-timeline.svg)
+
+```python
+y = cp.maximum(x, 0)               # queue the kernel; Python continues
+cp.cuda.Stream.null.synchronize()  # wait for the default stream
+```
+
+<!-- Teaching cue: synchronise before both clock readings; asynchronous errors may also surface at a later call. -->
+
+<!-- _footer: "Official guide: CuPy Basics → Current Stream" -->
 
 ---
 
@@ -537,6 +724,7 @@ cp.cuda.Stream.null.synchronize()     # now we wait for the GPU
 
 ```python
 # Pattern 1 — wall clock + explicit sync (fine for e2e, includes transfer)
+cp.cuda.Stream.null.synchronize()      # exclude earlier queued work
 t0 = time.perf_counter()
 c = cp.dot(a, b)
 cp.cuda.Stream.null.synchronize()      # REQUIRED before reading the clock
@@ -551,8 +739,9 @@ end.record(); end.synchronize()
 t_per_call = cp.cuda.get_elapsed_time(start, end) / iters / 1000
 ```
 
-❌ `t0=perf_counter(); c=cp.dot(a,b); t=perf_counter()-t0` — times only the **launch** (~20 µs),
-a constant no matter how big the matmul is. This is the timing trap in notebook C2.
+Warm up and repeat; report a median or mean.
+
+> **Timing trap:** no final `synchronize()` = launch time only (~20 µs), not matmul time (C2).
 
 <!-- _footer: "Full benchmark with both patterns: week06/02_cupy_matmul_benchmark.py" -->
 
@@ -560,21 +749,20 @@ a constant no matter how big the matmul is. This is the timing trap in notebook 
 
 ## Transfers and dtypes: two silent costs
 
-**Transfers**: a tiny array pays ~10–50 µs fixed latency; big arrays approach PCIe bandwidth.
+**Transfer trap:** tiny transfers pay fixed latency; large transfers approach PCIe bandwidth.
 
 ```python
 for batch in loader:
-    xb = cp.asarray(batch)     # BAD: upload every step, pays PCIe in the loop
+    xb = cp.asarray(batch)     # BAD: PCIe transfer in every step
 ```
-vs `X = cp.asarray(all_data)` **once**, then slice on the device.
 
-**float64 trap** (notebook C5): NumPy creates `float64` by default.
-A T4 has 1/32 as many FP64 units as FP32: the same matmul is **many times slower**.
+Instead: `X = cp.asarray(all_data)` **once**, then slice on the device.
 
-> **Hidden syncs:** `float(loss)` every step forces a GPU→CPU round trip.
-> Accumulate on the device, read **once per epoch**.
->
-> 📁 `week06/04_transfer_overhead.py`: upload bandwidth vs size, and a tiny ReLU that is slower on the GPU.
+**Dtype trap (C5):** NumPy often defaults to `float64`; on a T4, FP64 throughput is only 1/32 of FP32.
+
+**Hidden sync:** `float(loss)` every step forces a GPU→CPU round trip. Accumulate on the device; read once per epoch.
+
+<!-- _footer: "Demo: week06/04_transfer_overhead.py" -->
 
 ---
 
@@ -597,38 +785,37 @@ def sigmoid_fused(x):
 ## Common pitfalls & what the error looks like
 
 <style scoped>
-  table { font-size: 18px; }
+table { font-size: 18px; }
 </style>
 
 | Pitfall | Symptom / error | Fix |
-|---|---|---|
+| --- | --- | --- |
 | Timing without `synchronize()` | every op "takes" ~20 µs | sync or CUDA events before reading the clock |
 | `float64` by default | VRAM doubles; up to ~32× slower on a T4 | `.astype(np.float32)` **once**, at load |
 | Upload/download in the loop | GPU shows low utilisation, step time flat | move data once, slice on device |
 | `float(loss)` per step | GPU idles while Python waits | accumulate on device, read per epoch |
 | Small arrays on GPU | slower than NumPy | crossover: compute must ≫ transfer + launch |
-| Reading `nvidia-smi` mid-run | memory looks "leaked" | CuPy's memory pool keeps freed blocks (`free_all_blocks()`) |
+| Reading `nvidia-smi` mid-run | memory looks “leaked” | CuPy's memory pool retains blocks; inspect/release the default pool when appropriate |
 
 > All variants of one idea: **the cost ladder decides everything.**
 
 ---
 
-## Key take-aways: GPU hardware and CuPy
+## Key takeaways: GPU hardware and CuPy
 
-1. A GPU is a **throughput machine**: many **SMs**, each with CUDA cores and **Tensor Cores**.
-2. **Separate memories** joined by a slow cable (PCIe ~12–50 GB/s) vs VRAM at 300+ GB/s.
-3. **SIMT:** write what one thread does; hardware runs thousands in warps of 32, with no GIL.
-4. **Arithmetic intensity** decides the limit: matmul is compute-bound, ReLU is memory-bound.
-5. You rarely touch CUDA: **libraries** (cuBLAS, cuDNN) do the work, and CuPy exposes them as NumPy.
-6. Time GPU code only after `synchronize()`, keep data on the device, stay in `float32`.
-
-> Next: we use one small network to review Weeks 1–6 and see these ideas in numbers.
+1. GPUs optimise **throughput**: many SMs, CUDA cores, and Tensor Cores.
+2. CPU RAM and GPU VRAM are separate; transfers are expensive, so keep intermediates resident.
+3. **SIMT** runs many threads in warps; libraries handle the launch details for us.
+4. **Arithmetic intensity** separates compute-bound matmul from bandwidth-bound ReLU.
+5. CuPy offers a NumPy-like API, but array location, transfers, devices, and streams still matter.
+6. Use `float32` for this workload and synchronise for valid timings.
 
 ---
 
 <!-- _class: lead -->
 
 # Part VII
+
 # Review (Weeks 1–6): One MNIST Network
 
 ---
@@ -636,22 +823,22 @@ def sigmoid_fused(x):
 ## Notebook roadmap
 
 <style scoped>
-  table { font-size: 18px; }
+table { font-size: 18px; }
 </style>
 
 File: `week06/lab_week06_train_mlp_gpu.ipynb`
 
-| Part | Content | Course callback | |
-|---|---|---|---|
-| 0 | Setup, GPU check, `nvidia-smi` | Week 6 spec sheet | 2 |
-| A | CPU warm-up: FLOPs and practical peak, loop vs Numba vs BLAS, stable softmax, BLAS threads | Weeks 1–4 | 5 |
-| B | NumPy MLP: forward/backward, gradient check, train, sharded gradients, Amdahl profile | Weeks 1, 2, 5 | 10 |
-| C | CuPy basics: matmul sweep, transfers, float64 trap | Week 6 (today's Parts IV–VI) | 10 |
-| D | Same network on GPU + batch/width sweep + 3 mistakes | Amdahl, cost ladder | 10 |
-| E | PyTorch version, autograd check, mixed-precision peek | Forward pointer to Weeks 9–12 | 10 |
-| F | Summary table (NumPy/CuPy/PyTorch × CPU/GPU) | the review, in numbers | 2 |
+| Part | Content | Course callback | Suggested minutes |
+| --- | --- | --- | --- |
+| 0 | Setup and GPU check | Week 6 spec sheet | 2 |
+| A | CPU peak; loops, Numba, BLAS; softmax; BLAS threads | Weeks 1–4 | 5 |
+| B | NumPy MLP, gradient check, training, shards, Amdahl | Weeks 1, 2, 5 | 10 |
+| C | CuPy timing, matmul sweep, transfers, dtype | Parts IV–VI | 10 |
+| D | GPU training, batch/width sweep, three mistakes | Amdahl, cost ladder | 10 |
+| E | PyTorch, autograd, mixed precision | Weeks 9–12 | 10 |
+| F | NumPy/CuPy/PyTorch summary table | Review in numbers | 2 |
 
-> Parts A–B: Weeks 1–5 review. Exercises E-1…E-5: homework.
+> A–B review Weeks 1–5; E-1…E-5 are homework.
 
 ---
 
@@ -665,7 +852,7 @@ W -= lr * grad                              # update (all parameters)
 ```
 
 | Kind | Example | Which week taught us to speed it up? |
-|---|---|---|
+| --- | --- | --- |
 | **Dense linear algebra** | `X @ W1` | 2: BLAS, vectorisation |
 | **Element-wise / broadcast** | ReLU, `+ b1`, softmax | 2: vectorise, Numba |
 | **Many independent pieces** | batches, shards, workers | 3–5: threads, processes, Dask/Ray |
@@ -677,16 +864,19 @@ W -= lr * grad                              # update (all parameters)
 ## Week 1: measure first, count FLOPs
 
 | Tool | Answers |
-|---|---|
+| --- | --- |
 | `timeit` | "how long?" |
 | `cProfile`, `line_profiler`, `py-spy` | "where does the time go?" |
 | FLOP count | "how close to the hardware limit are we?" |
 
 Matmul `(B×a)·(a×b)` costs **2·B·a·b FLOPs**. Backward ≈ 2× forward, so **step ≈ 3× forward**.
 
-Our step: 2·256·784·512 ≈ 205 MFLOP in layer 1 → **≈ 0.6 GFLOP per step**, ≈ 145 GFLOP per epoch.
+Our step: 2·256·784·512 ≈ 205 MFLOP in layer 1; including layer 2 and backward gives
+**≈ 0.63 GFLOP per step**, ≈ 148 GFLOP per 234-step epoch.
 
-$$\text{GFLOP/s}=\frac{\text{FLOPs}}{t\cdot 10^{9}} \qquad\text{compare with the machine's peak}$$
+$$
+\text{GFLOP/s}=\frac{\text{FLOPs}}{t\cdot 10^{9}} \qquad\text{compare with the machine's peak}
+$$
 
 > Notebook A1 measures this CPU's practical peak: our yardstick for the GPU.
 
@@ -707,7 +897,6 @@ A @ B                   # ~0.01 s.  Tuned BLAS: tiles, SIMD, all cores
 
 > **Remember this pattern.** On the GPU, `A @ B` calls **cuBLAS**: the same idea, another backend.
 
-
 ---
 
 ## Week 2: broadcasting and a stable softmax
@@ -724,7 +913,7 @@ loss = -logp[np.arange(B), y].mean()                  # fancy-index the right cl
 
 - `exp(1000)` is `inf`: the naive softmax returns `nan`. **Subtract the row max.**
 - Keep arrays **`float32`**. NumPy defaults to `float64`, which is 2× the memory
-  and (as we will see) **very slow on GPUs**.
+and (as we will see) **very slow on GPUs**.
 
 > Correctness first: the notebook checks the hand-written backward pass against finite differences.
 
@@ -733,7 +922,7 @@ loss = -logp[np.arange(B), y].mean()                  # fancy-index the right cl
 ## Weeks 3–4: what does the GIL mean for training?
 
 | Question | Answer |
-|---|---|
+| --- | --- |
 | Is `A @ B` single-threaded? | No: BLAS uses **all cores**, outside the GIL |
 | Do we need `multiprocessing` for the matmul? | **No.** It would fight BLAS for the cores (oversubscription) |
 | Where do threads/processes help? | **Around** the math: loading, tokenising, augmenting, API calls |
@@ -752,7 +941,7 @@ with threadpool_limits(limits=1, user_api="blas"):   # Notebook A4
 ## Week 5: the four questions, applied to our step
 
 | Question | CPU / cluster answer | In our training step |
-|---|---|---|
+| --- | --- | --- |
 | **Split** | partitions, chunks | split the **batch** into shards |
 | **Assign** | scheduler | each worker takes one shard |
 | **Move** | cost ladder (RAM → network) | average the **gradients** |
@@ -769,11 +958,13 @@ avg    = sum(grads) / 4                                    # move + wait = all-r
 
 ## Week 5: cost of distribution, with numbers
 
-$$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}$$
+$$
+S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}
+$$
 
 - **Granularity:** tasks must be big compared with their overhead (Dask: ~1 ms per task!).
 - **Notebook B6:** on our test CPU, 5 matmuls took ~60 % of a step (measure yours). If *only* matmul were
-  infinitely fast, Amdahl caps the speedup at 1/(1−0.6) ≈ **2.5×**.
+infinitely fast, Amdahl caps the speedup at 1/(1−0.6) ≈ **2.5×**.
 
 > The GPU escapes this cap by running **everything** on the device (element-wise work
 > too), as long as the data stays there. That is the story of the GPU parts of this week.
@@ -787,7 +978,6 @@ $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1
 3. Why is `ThreadPoolExecutor` useless for a pure-Python loop but fine for NumPy matmul?
 4. Averaging 4 shard gradients equals the full-batch gradient. Which later topic is this?
 5. A task takes 1 ms of compute and 1 ms of overhead. What is the best-case speedup from adding workers?
-
 
 ---
 
@@ -806,34 +996,35 @@ $$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1
 Open **`week06/lab_week06_train_mlp_gpu.ipynb`** in Colab → Runtime → **T4 GPU** → run Part 0, A and B.
 
 Write down (📝 cells):
+
 1. CPU practical peak, GFLOP/s (A1)
 2. NumPy time per epoch and test accuracy (B4)
 3. Matmul fraction `f` of a step, and the Amdahl bound (B6)
 
 > Parts A–B run top to bottom in ~1–2 minutes on the CPU.
 
-
 ---
 
 ## 🛠 Lab: the same network on the GPU (notebook C → F)
 
-1. **C1–C2** hello CuPy, the timing trap (📝)
-2. **C3** matmul sweep → crossover size (📝); **C4–C5** transfer cost, float64 trap
-3. **D** train on the GPU → speedup (📝); **D1** sweep heat-map; **D2** three mistakes
-4. **E–F** PyTorch and the summary table
+1. **C1–C2:** hello CuPy and the timing trap.
+2. **C3–C5:** matmul crossover, transfer cost, and the float64 trap.
+3. **D:** train on GPU; **D1** sweep batch/width; **D2** diagnose three mistakes.
+4. **E–F:** compare PyTorch and complete the summary table.
 
-**Submit:** results table + one sentence: *"On a T4, training this MLP on the GPU is worthwhile when … because …"*
+**Submit:** the results table + one sentence: *“On a T4, GPU training is worthwhile when … because …”*
 
-> Homework: `lab_week06_cupy.ipynb` and exercises E-1 … E-5.
+**Homework:** `lab_week06_cupy.ipynb` and exercises E-1…E-5.
 
 ---
 
 ## One loop, two devices
 
 ```python
-def train(xp, data, hidden=(512,), batch=256, epochs=5, lr=0.1):
+def train(xp, X, y, hidden=(512,), batch=256, epochs=5, lr=0.1):
     params = [xp.asarray(p) for p in init_params(...)]   # weights → device once
-    Xd, yd = xp.asarray(Xtr), xp.asarray(ytr)            # data → device once (188 MB)
+    Xd, yd = xp.asarray(X), xp.asarray(y)                # data → device once (188 MB)
+    n = X.shape[0]
     for epoch in range(epochs):
         perm = xp.asarray(np.random.permutation(n))      # one small upload / epoch
         total = xp.zeros((), dtype=xp.float32)           # loss accumulates ON device
@@ -851,17 +1042,16 @@ def train(xp, data, hidden=(512,), batch=256, epochs=5, lr=0.1):
 ## Expected shape of the results (T4, Colab)
 
 | Backend | Time / epoch | Test accuracy |
-|---|---|---|
+| --- | --- | --- |
 | NumPy (CPU, 2 cores) | ______ s | ______ % |
 | CuPy (GPU) | ______ s | ______ % |
 | PyTorch (CPU) | ______ s | ______ % |
 | PyTorch (GPU) | ______ s | ______ % |
 
-- **Accuracy is the same** (~97 % after 5 epochs on real MNIST): same maths, same initial weights.
-  Weights differ in the last digits: float addition is not associative.
-- The GPU is clearly faster, but **less than peak ratios suggest**: why? (next slides)
+- **Accuracy should be similar** (~97% after 5 epochs): equivalent maths, but not bit-identical logs. Operation order, shuffling, and floating-point non-associativity can differ.
+- The GPU is faster, but **less than peak ratios suggest**. Why? The next slides explain.
 
-> Fill this table in from your notebook run (Part F prints it for you).
+<!-- _footer: "Fill the table from your run; notebook Part F prints it." -->
 
 ---
 
@@ -869,8 +1059,8 @@ def train(xp, data, hidden=(512,), batch=256, epochs=5, lr=0.1):
 
 Our step is only **0.6 GFLOP**: ~0.1–0.2 ms of real GPU math, but **dozens of kernel launches** (~10 µs each).
 
-| | small width H | large width H |
-|---|---|---|
+|  | small width H | large width H |
+| --- | --- | --- |
 | **small batch B** | CPU ≈ GPU (launch-bound) | GPU wins somewhat |
 | **large batch B** | GPU wins somewhat | **GPU wins big** (compute-bound) |
 
@@ -885,7 +1075,7 @@ Our step is only **0.6 GFLOP**: ~0.1–0.2 ms of real GPU math, but **dozens of 
 ## Three ways to throw the speedup away (Notebook D2)
 
 | Mistake | Fix |
-|---|---|
+| --- | --- |
 | `float(loss)` every step (hidden sync) | accumulate on device; read once per epoch |
 | uploading every batch from the CPU | keep data resident in VRAM; slice there |
 | forgetting `float32` | cast once at load time |
@@ -899,18 +1089,17 @@ batch size and model width are limited by **VRAM**, not by patience.
 
 ## CuPy vs PyTorch — when to use which
 
-| | CuPy | PyTorch |
-|---|---|---|
+|  | CuPy | PyTorch |
+| --- | --- | --- |
 | Purpose | GPU NumPy | deep learning framework |
 | Autograd | ❌ (we wrote backward by hand) | ✅ |
 | GPU backend | cuBLAS, cuDNN | cuBLAS, cuDNN |
 | This course | Weeks 6–7 (learn the GPU) | Weeks 9+ (training, pipelines, DDP) |
 
-- Use CuPy: preprocessing, custom array ops, quick GPU prototyping, porting NumPy/SciPy code
-- Use PyTorch: anything that must train a neural network
+- **CuPy:** preprocessing, custom array operations, prototyping, and porting NumPy/SciPy code.
+- **PyTorch:** neural-network training with autograd and a broader modelling ecosystem.
 
-> In notebook E1 we verify: **autograd's gradients equal the ones we derived by hand.**
-> Autograd saves you from writing `backward()`; it does not change the matmuls.
+> Notebook E1 checks autograd against our hand-written gradients; autograd removes `backward()`, not the matmuls.
 
 ---
 
@@ -935,7 +1124,7 @@ for xb, yb in batches:                       # tensors already on the GPU
 One 4096² matmul on the T4:
 
 | Precision | Where it runs | Rough result |
-|---|---|---|
+| --- | --- | --- |
 | float32 | CUDA cores | ~4–5 TFLOP/s |
 | float16 | **Tensor Cores** | several times higher |
 
@@ -949,7 +1138,9 @@ One 4096² matmul on the T4:
 <!-- _class: lead -->
 
 # Part VIII
+
 # Midterm Theory Review
+
 ### format · coverage · how to prepare
 
 ---
@@ -968,11 +1159,17 @@ One 4096² matmul on the T4:
 
 ## Key formula sheet (provided in the exam)
 
-$$S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}$$
+$$
+S(N)=\frac{1}{f_s+\frac{1-f_s}{N}} \qquad S_{comm}(N)=\frac{1}{f_s+f_c+\frac{1-f_s-f_c}{N}}
+$$
 
-$$\text{GFLOP/s}=\frac{2n^3}{t\cdot 10^{9}} \qquad \text{arithmetic intensity}=\frac{\text{FLOPs}}{\text{bytes moved}} \quad(\text{matmul } n\times n:\ n/6)$$
+$$
+\text{GFLOP/s}=\frac{2n^3}{t\cdot 10^{9}} \qquad \text{arithmetic intensity}=\frac{\text{FLOPs}}{\text{bytes moved}} \quad(\text{matmul } n\times n:\ n/6)
+$$
 
-$$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3,\ \ t_{transfer}\propto n^2$$
+$$
+t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3,\ \ t_{transfer}\propto n^2
+$$
 
 **Estimation drills worth practising:** FLOPs of a layer (2·B·a·b), bytes of a float32 array, transfer time over ~12–50 GB/s, "is this workload compute- or bandwidth-bound?"
 
@@ -981,7 +1178,7 @@ $$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3
 ## What you must be able to *do*, per week
 
 | Week | Skill, not topic |
-|---|---|
+| --- | --- |
 | 1 | profile a script, locate the hot line, compute achieved GFLOP/s vs peak |
 | 2 | rewrite a Python loop as vectorised NumPy; say when Numba beats hand-vectorising |
 | 3 | spot a race condition; choose lock/semaphore/queue for a pattern; explain why `Pool` pickles |
@@ -996,7 +1193,7 @@ $$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3
 ## One-page map: which tool for which bottleneck?
 
 | Symptom | Likely cause | First thing to try |
-|---|---|---|
+| --- | --- | --- |
 | pure-Python loop dominates | interpreter overhead | vectorise → Numba |
 | matmul slow, 1 core busy | BLAS threads limited / bad dtype | check threads, `float32` |
 | CPU-bound Python tasks | GIL | processes (not threads) |
@@ -1025,7 +1222,6 @@ $$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3
 9. A colleague's GPU code uses `float(loss)` inside the inner loop. What happens?
 10. Averaging gradients from 4 shards equals the full-batch gradient: why, and which week uses it?
 
-
 ---
 
 ## Practice questions: answers (1/2)
@@ -1048,28 +1244,35 @@ $$t_{transfer}=\frac{\text{bytes}}{\text{PCIe BW}} \qquad t_{compute}\propto n^3
 
 ---
 
-
-<!-- _class: lead -->
 <!-- _paginate: false -->
 
 <style scoped>
-  section { font-size: 22px; }
-  li { margin: 0; }
+section { font-size: 22px; }
+li { margin: 0; }
 </style>
 
-# Sources & Further Reading
+# Sources: hardware
 
-**Hardware**
-- CUDA C Programming Guide (thread hierarchy, memory): docs.nvidia.com/cuda/cuda-c-programming-guide
-- Blackwell architecture: nvidia.com/en-us/data-center/technologies/blackwell-architecture
-- DGX B200 specs: nvidia.com/en-us/data-center/dgx-b200
-- RTX 5090 specs: nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090
-- GPU list by CUDA capability: developer.nvidia.com/cuda-gpus
-- NVIDIA T4 datasheet: nvidia.com/en-us/data-center/tesla-t4
+- [NVIDIA CUDA C Programming Guide](https://docs.nvidia.com/cuda/cuda-c-programming-guide/) — thread hierarchy and memory
+- [NVIDIA T4 datasheet](https://www.nvidia.com/en-us/data-center/tesla-t4/)
+- [Blackwell architecture](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)
+- [DGX B200 specifications](https://www.nvidia.com/en-us/data-center/dgx-b200/)
+- [RTX 5090 specifications](https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/)
+- [NVIDIA GPUs by CUDA capability](https://developer.nvidia.com/cuda-gpus)
 
-**Software**
-- CuPy docs: docs.cupy.dev · NVIDIA GPU-accelerated libraries: developer.nvidia.com/gpu-accelerated-libraries
-- Colab GPU FAQ: research.google.com/colaboratory/faq
-- Roofline model: Williams, Waterman, Patterson, *Communications of the ACM* 52(4), 2009
+---
 
-Figures `w06-*.svg` are course-generated (see img/CREDITS.md and `week06/make_figures.py`).
+<style scoped>
+section { font-size: 22px; }
+li { margin: 0; }
+</style>
+
+# Sources: software and further reading
+
+- [CuPy User Guide: Basics of CuPy](https://docs.cupy.dev/en/stable/user_guide/basic.html) — `ndarray`, current device/stream, transfers, and CPU/GPU-agnostic code
+- [CuPy API reference](https://docs.cupy.dev/en/stable/reference/)
+- [NVIDIA GPU-accelerated libraries](https://developer.nvidia.com/gpu-accelerated-libraries)
+- [Colab GPU FAQ](https://research.google.com/colaboratory/faq)
+- Williams, Waterman, Patterson (2009), [Roofline model](https://doi.org/10.1145/1498765.1498785), *Communications of the ACM* 52(4)
+
+Figures `w06-*.svg` are course-generated; see `img/CREDITS.md` and `week06/make_figures.py`.
