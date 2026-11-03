@@ -1,0 +1,324 @@
+% YZM 513 - High-Performance Programming for AI -- Midterm (Weeks 1-6)
+%
+% Student paper:  pdflatex midterm.tex        (or: make exam)
+% Answer key:     pdflatex midterm_key.tex    (or: make key)
+% The key is this same source with \printanswers switched on (see midterm_key.tex).
+\documentclass[addpoints,11pt]{exam}
+
+\usepackage[a4paper,top=2cm,bottom=2cm,left=2.2cm,right=2.2cm,headheight=14pt,footskip=24pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{needspace}
+
+% midterm_key.tex defines \showanswers before loading this file.
+\ifdefined\showanswers
+  \printanswers
+\fi
+
+\newcommand{\examminutes}{60}   % change here if the time slot changes
+\newcommand{\examtitle}{Midterm Exam}
+\newcommand{\coursename}{YZM 513 -- High-Performance Programming for AI}
+\newcommand{\keycolor}{red!70!black}
+
+% --- how things look --------------------------------------------------------
+\pointsinmargin
+\bracketedpoints
+\CorrectChoiceEmphasis{\bfseries\color{\keycolor}}
+\SolutionEmphasis{\color{\keycolor}}
+\unframedsolutions
+\renewcommand{\solutiontitle}{\noindent\textbf{\color{\keycolor}Why: }}
+\setlength{\parskip}{2pt}
+\renewcommand{\choiceshook}{\setlength{\itemsep}{0pt}\setlength{\topsep}{1pt}\setlength{\parsep}{0pt}}
+\raggedright
+
+% keep a question together with its choices (no stem alone at the page bottom)
+\newcommand{\q}{\Needspace{7\baselineskip}\question}
+
+% --- header / footer --------------------------------------------------------
+\pagestyle{headandfoot}
+\firstpageheader{}{}{}
+\runningheader{\coursename}{}{\examtitle\ifprintanswers\ (ANSWER KEY)\fi}
+\runningheadrule
+\firstpagefooter{}{Page \thepage\ of \numpages}{}
+\runningfooter{}{Page \thepage\ of \numpages}{}
+
+% A blank to fill in: \blank{answer}{width}. Shows a line on the paper and the
+% answer (in colour) on the key.
+\newcommand{\blank}[2]{\hspace{0pt}\fillin[#1][#2]\hspace{0pt}}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries \coursename}\\[3pt]
+  {\large \examtitle\ \textemdash\ Weeks 1--6}\\[3pt]
+  \ifprintanswers {\Large\bfseries\color{\keycolor} ANSWER KEY}\fi
+\end{center}
+
+\vspace{2pt}
+\noindent Name: \hrulefill\quad Student no.: \hrulefill\quad Date: \hrulefill
+
+\vspace{8pt}
+\noindent\begin{tabular}{@{}lp{0.82\textwidth}@{}}
+  \textbf{Time}   & \examminutes\ minutes, closed book. A formula sheet is on the last page.\\
+  \textbf{Format} & \numquestions\ questions, \numpoints\ points in total (4 points each).\\
+  \textbf{Part A} & Multiple choice, Q1--Q13. Circle \emph{exactly one} letter.\\
+  \textbf{Part B} & Fill in the blank, Q14--Q25. Write one short word, number or expression on the line.
+\end{tabular}
+
+\vspace{2pt}
+\noindent\rule{\textwidth}{0.4pt}
+
+\begin{questions}
+\fullwidth{\vspace{4pt}\textbf{\large Part A -- Multiple choice}}
+
+%------------------------------------------------------------------ Week 1 ---
+\q[4]
+Single-core CPU speed stopped improving much around 2005, even though transistor counts kept
+growing. What was the main reason?
+\begin{choices}
+  \choice Transistors could not be made any smaller.
+  \CorrectChoice Power dissipation and heat limited the clock frequency.
+  \choice Main memory became too expensive.
+  \choice Python introduced the GIL.
+\end{choices}
+\begin{solution}The ``frequency wall'': clocks plateaued at 3--5 GHz, so speed-ups now come from parallelism.\end{solution}
+
+\q[4]
+A \texttt{cProfile} report shows that \texttt{compute\_distances} takes 90\% of the run time. Which tool
+tells you which \emph{line} inside that function is the slow one?
+\begin{choices}
+  \choice \texttt{timeit}
+  \choice \texttt{cProfile} (run it again)
+  \CorrectChoice \texttt{line\_profiler}
+  \choice \texttt{multiprocessing.Pool}
+\end{choices}
+\begin{solution}\texttt{cProfile} works per function; \texttt{line\_profiler} (\texttt{kernprof -l -v}) works per line.\end{solution}
+
+%------------------------------------------------------------------ Week 2 ---
+\q[4]
+Why do we compute \texttt{logits - logits.max(axis=1, keepdims=True)} before \texttt{np.exp} in a
+NumPy softmax?
+\begin{choices}
+  \choice To make the code run on the GPU.
+  \choice To turn the Python loop into a vectorised operation.
+  \choice To make each row sum to 1.
+  \CorrectChoice To avoid overflow in \texttt{exp}, without changing the result.
+  
+\end{choices}
+\begin{solution}\texttt{np.exp(1000.)} overflows to \texttt{inf} and gives \texttt{nan}. Subtracting the row maximum leaves the softmax unchanged.\end{solution}
+
+\q[4]
+What is the difference between Numba's \texttt{@jit} and \texttt{@njit}?
+\begin{choices}
+  \CorrectChoice \texttt{@njit} raises an error if it cannot compile, instead of silently falling back to slow object mode.
+  \choice \texttt{@njit} is always faster than \texttt{@jit}, even when both compile.
+  \choice \texttt{@njit} turns on multi-core execution automatically.
+  \choice \texttt{@njit} can compile Python dicts and strings; \texttt{@jit} cannot.
+  
+\end{choices}
+\begin{solution}\texttt{@njit} equals \texttt{@jit(nopython=True)}. Parallel execution needs \texttt{parallel=True} and \texttt{prange}.\end{solution}
+
+%------------------------------------------------------------------ Week 3 ---
+\q[4]
+Which situation contains a race condition?
+\begin{choices}
+  \choice Two threads only read the same NumPy array.
+  \choice Two threads each write to their own separate array.
+  \CorrectChoice Two threads both run \texttt{counter += 1} on a shared global variable, with no lock.
+  \choice Two threads increment a counter while holding the same \texttt{Lock}.
+\end{choices}
+\begin{solution}Shared state, at least one write, and no synchronisation. Here \texttt{+=} is three steps: load, add, store.\end{solution}
+
+\q[4]
+You want \emph{at most 3} threads to use the GPU at the same time. Which primitive fits?
+\begin{choices}
+  \choice \texttt{threading.Lock()}
+  \CorrectChoice \texttt{threading.Semaphore(3)}
+  \choice \texttt{threading.Barrier(3)}
+  \choice \texttt{threading.Event()}
+\end{choices}
+\begin{solution}A semaphore allows up to $N$ holders; a lock is the $N=1$ case.\end{solution}
+
+%------------------------------------------------------------------ Week 4 ---
+\q[4]
+You must tokenise millions of documents with a tokenizer written in \emph{pure Python} on an 8-core
+machine. Which choice gives real speed-up?
+\begin{choices}
+  \CorrectChoice \texttt{ProcessPoolExecutor(max\_workers=8)}
+  \choice \texttt{ThreadPoolExecutor(max\_workers=50)}
+  \choice \texttt{asyncio.gather} over all documents
+  \choice One thread per document with \texttt{threading.Thread}
+\end{choices}
+\begin{solution}Pure-Python bytecode holds the GIL, so threads and coroutines run one at a time. Each process has its own GIL.\end{solution}
+
+\q[4]
+You must send 500 prompts to an LLM API server; each request mostly \emph{waits} for the network.
+Which approach scales best?
+\begin{choices}
+  \choice \texttt{ProcessPoolExecutor} with 500 workers
+  \choice 500 OS threads (about 4 GB of stacks)
+  \choice A plain \texttt{for} loop that waits for each reply
+  \CorrectChoice \texttt{asyncio} with \texttt{await} and \texttt{gather}: one thread, 500 lightweight coroutines
+\end{choices}
+\begin{solution}Coroutines cost about KB each, threads about MB each. Many concurrent I/O waits is the use case for \texttt{asyncio}.\end{solution}
+
+\q[4]
+\texttt{executor.submit(lambda x: x**2, 10)} fails with a \texttt{PicklingError} on a
+\texttt{ProcessPoolExecutor}. Why?
+\begin{choices}
+  \choice Lambdas cannot be run by the GIL.
+  \CorrectChoice Arguments and functions are sent to worker processes by pickling, and lambdas cannot be pickled.
+  \choice \texttt{ProcessPoolExecutor} only accepts NumPy functions.
+  \choice The pool has too few workers.
+\end{choices}
+\begin{solution}Fix: define a named function with \texttt{def}.\end{solution}
+
+%------------------------------------------------------------------ Week 5 ---
+\q[4]
+A Dask job with 2000 very small tasks (about 1 ms of compute each) is \emph{slower} than the serial
+code. What is the most likely cause?
+\begin{choices}
+  \choice The GIL stops Dask from using threads.
+  \choice Dask cannot run NumPy functions.
+  \CorrectChoice The per-task overhead is as large as the compute: the granularity is too fine.
+  \choice The network is too fast.
+\end{choices}
+\begin{solution}Fix: make tasks coarser (bigger chunks), so each task computes much longer than it costs to schedule.\end{solution}
+
+\q[4]
+Why call \texttt{ref = ray.put(big\_array)} once and pass \texttt{ref} to every task, instead of
+passing \texttt{big\_array} itself?
+\begin{choices}
+  \CorrectChoice The array is serialised once and stored in the object store; tasks receive a reference instead of a copy each.
+  \choice It makes the array writable by all tasks at the same time.
+  \choice It moves the array to the GPU.
+  \choice It turns Ray tasks into actors.
+\end{choices}
+\begin{solution}Principle: put big read-only data somewhere once, and pass references. Moving data is usually the real cost.\end{solution}
+
+%------------------------------------------------------------------ Week 6 ---
+\q[4]
+A matrix multiplication gains much more from a GPU than a ReLU does. What is the reason?
+\begin{choices}
+  \choice ReLU cannot be written as a CUDA kernel.
+  \choice Tensor Cores only support matrix multiplication.
+  \choice A GPU has fewer cores than a CPU, so simple operations are slow.
+  \CorrectChoice Matmul has high arithmetic intensity (compute-bound); ReLU has about 0.125 FLOP/byte (bandwidth-bound).
+\end{choices}
+\begin{solution}For $n\times n$ float32 matmul the intensity is about $n/6$ FLOP per byte; ReLU does one operation per 8 bytes moved.\end{solution}
+
+\q[4]
+A student times \texttt{c = cp.dot(a, b)} (4096$\times$4096) with \texttt{time.perf\_counter()} before
+and after the call, and gets 0.03~ms. What went wrong?
+\begin{choices}
+  \choice The matrices were float64.
+  \choice CuPy does not support \texttt{dot}.
+  \CorrectChoice There was no \texttt{synchronize()}, so only the asynchronous kernel \emph{launch} was timed.
+  \choice The arrays were still in CPU memory.
+\end{choices}
+\begin{solution}Synchronise before reading the clock (or use CUDA events). Without it, every operation seems to take about 20~$\mu$s.\end{solution}
+
+%==============================================================================
+\fullwidth{\vspace{8pt}\textbf{\large Part B -- Fill in the blank}}
+
+%------------------------------------------------------------------ Week 1 ---
+\q[4]
+Multiplying two $n\times n$ matrices costs about \blank{$2n^3$}{1.2in} floating-point operations.
+\begin{solution}$n^2$ outputs, each needs $n$ multiplies and $n$ adds, so $2n^3$.\end{solution}
+
+\q[4]
+A program has a serial fraction of 20\%. By Amdahl's law, even with an unlimited number of processors
+the speed-up can never exceed \blank{5}{0.8in}$\times$.
+\begin{solution}$1/f_s = 1/0.2 = 5$.\end{solution}
+
+%------------------------------------------------------------------ Week 2 ---
+\q[4]
+In NumPy, \texttt{b = a[10:20]} creates a \blank{view}{1.2in}, not a copy, so \texttt{b[0] = 999}
+also changes \texttt{a[10]}.
+\begin{solution}Slices and \texttt{.T} share memory. Use \texttt{.copy()} for an independent array.\end{solution}
+
+\q[4]
+A \texttt{float32} array of shape $1024\times 1024$ takes \blank{4}{0.8in}~MB of memory
+(a \texttt{float64} array of the same shape takes 8~MB).
+\begin{solution}$2^{20}$ elements $\times$ 4 bytes $=4$~MB.\end{solution}
+
+%------------------------------------------------------------------ Week 3 ---
+\q[4]
+A race condition needs three things: shared state, no synchronisation, and at least one
+\blank{write}{1in} access.
+\begin{solution}Many threads only reading the same data is safe.\end{solution}
+
+\q[4]
+Deadlock between two locks can be avoided if every thread acquires the locks in the same
+\blank{order}{1.2in}.
+\begin{solution}Lock ordering: Thread 1 holding A and wanting B while Thread 2 holds B and wants A cannot happen.\end{solution}
+
+%------------------------------------------------------------------ Week 4 ---
+\q[4]
+The GIL exists because CPython manages memory with \blank{reference}{1.4in} counting, which would
+be corrupted if two threads updated the counts at the same time.
+\begin{solution}One big lock protects all interpreter state, including every object's reference count.\end{solution}
+
+%------------------------------------------------------------------ Week 5 ---
+\q[4]
+With a serial fraction $f_s = 0.05$ and a communication fraction $f_c = 0.05$, the speed-up can
+never exceed \blank{10}{0.8in}$\times$, however many workers are added.
+\begin{solution}Ceiling $=1/(f_s+f_c)=1/0.10=10$.\end{solution}
+
+\q[4]
+In Ray, a class whose instance keeps state between calls (for example a model loaded once and used
+for many predictions) is called an \blank{actor}{1.2in}.
+\begin{solution}Stateless functions are \emph{tasks}; stateful workers are \emph{actors} (\texttt{@ray.remote} on a class).\end{solution}
+
+%------------------------------------------------------------------ Week 6 ---
+\q[4]
+A GPU runs its threads in groups of \blank{32}{0.8in} called a \emph{warp}. If threads of a warp take
+different branches, both paths are executed one after the other (``divergence'').
+\begin{solution}A warp is 32 threads executing one instruction in lockstep.\end{solution}
+
+\q[4]
+In a GPU training loop, calling \texttt{float(loss)} in every iteration forces a GPU$\to$CPU
+\blank{synchronization}{1.3in} and the GPU sits idle while Python waits.
+\begin{solution}Accept ``sync'', ``synchronisation'' or ``synchronization''. Fix: accumulate the loss on the device and read it once per epoch.\end{solution}
+
+\q[4]
+A $4096\times4096$ \texttt{float32} matrix uses about \blank{64}{0.8in}~MB of GPU memory.
+\begin{solution}$4096^2\times 4~\text{bytes}=64$~MB. Over PCIe at $\sim$12~GB/s this takes about 5~ms to transfer.\end{solution}
+
+\end{questions}
+
+%==============================================================================
+\clearpage
+\begin{center}{\Large\bfseries Formula sheet}\end{center}
+
+\bigskip
+\noindent\textbf{Amdahl's law} ($f_s$ = serial fraction, $N$ = number of workers):
+\[
+  S(N)=\frac{1}{f_s+\dfrac{1-f_s}{N}} \qquad\qquad
+  S(\infty)=\frac{1}{f_s}
+\]
+\textbf{With communication} ($f_c$ = fraction spent on overhead and data movement):
+\[
+  S_{comm}(N)=\frac{1}{f_s+f_c+\dfrac{1-f_s-f_c}{N}} \qquad\qquad
+  S_{comm}(\infty)=\frac{1}{f_s+f_c}
+\]
+\textbf{Matrix multiplication} of two $n\times n$ matrices:
+\[
+  \text{FLOPs}=2n^3 \qquad\qquad
+  \text{GFLOP/s}=\frac{2n^3}{t\cdot10^{9}}
+\]
+\textbf{Memory and transfer:}
+\[
+  \text{bytes}=\text{elements}\times\text{bytes per element}
+  \quad(\texttt{float32}=4,\ \texttt{float64}=8)
+  \qquad
+  t_{transfer}=\frac{\text{bytes}}{\text{bandwidth}}
+\]
+\textbf{Arithmetic intensity} $=\dfrac{\text{FLOPs}}{\text{bytes moved}}$; for an $n\times n$ float32 matmul it is about $n/6$.
+
+\bigskip
+\noindent\textbf{Units:} in this exam 1~MB $=2^{20}$ bytes ($1024\times1024$). Typical PCIe 3.0 bandwidth: $\sim$12~GB/s.
+
+\end{document}
