@@ -1,6 +1,6 @@
 ## Week 8: your first CUDA kernels
 
-Slides: `../08cuda-kernel-numba-cuda.md` (Marp). Part III is a sequence of seven CUDA C/C++ worked examples; each has a **problem**, a **step-by-step** walkthrough with worked index tables, the **full code** and the **expected output**.
+Slides: `../08cuda-kernel-numba-cuda.md` (Marp). Part III interleaves seven CUDA C/C++ worked examples with the concept slides; each has a **problem**, a **step-by-step** walkthrough with worked index tables, the **full code** and the **expected output**.
 
 ## CUDA C/C++ examples (`cuda_c/`, Part III of the deck)
 

@@ -3,7 +3,7 @@
 //
 // Build & run:   nvcc -o 02_vector_add_small 02_vector_add_small.cu && ./02_vector_add_small
 // (Error checking is left out on purpose so the workflow is easy to read.
-//  Example 05 adds it, and every later example uses it.)
+//  Example 05 explains it, and examples 04, 06 and 07 use it.)
 #include <cstdio>
 #include <cstdlib>
 
