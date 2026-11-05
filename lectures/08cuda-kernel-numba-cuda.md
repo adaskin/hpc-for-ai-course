@@ -919,8 +919,6 @@ Kernel: `i = blockIdx.x * blockDim.x + threadIdx.x;  if (i < n) c[i] = a[i] + b[
 
 > 📁 `week08/cuda_c/02_vector_add_small.cu`
 
-<style scoped>pre { font-size: 14px; }</style>
-
 ```cpp
 #include <cstdio>
 #include <cstdlib>
@@ -955,8 +953,6 @@ int main() {
 ---
 
 ## Example 2 · Full code (2/2)
-
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
     // Step 3: copy the inputs host -> device
@@ -1070,7 +1066,7 @@ Expected: guard cells stay `-1` in the safe run, and become `10` and `11` in the
 
 > 📁 `week08/cuda_c/03_bounds_check.cu`
 
-<style scoped>pre { font-size: 14px; }</style>
+
 
 ```cpp
 #include <cstdio>
@@ -1099,7 +1095,6 @@ void show(const char *label, const int *h) {
 
 ## Example 3 · Full code (2/2)
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 int main() {
@@ -1204,7 +1199,6 @@ Questions this example answers:
 > 📁 `week08/cuda_c/04_launch_config.cu`
 > `CUDA_CHECK(call)` = "run the call, stop if it failed". Example 5 explains it.
 
-<style scoped>pre { font-size: 13px; }</style>
 
 ```cpp
 #include <cstdio>
@@ -1240,7 +1234,6 @@ int run_and_count_wrong(int n, int blocks, int threads,
 
 ## Example 4 · Full code (2/3)
 
-<style scoped>pre { font-size: 13px; }</style>
 
 ```cpp
 int main() {
@@ -1278,7 +1271,6 @@ int main() {
 
 ## Example 4 · Full code (3/3)
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
     printf("\nPart C: N = %d\n", N);
@@ -1384,7 +1376,6 @@ CUDA_CHECK(cudaDeviceSynchronize());   // did the kernel RUN without crashing? (
 
 > 📁 `week08/cuda_c/05_error_checking.cu`
 
-<style scoped>pre { font-size: 13px; }</style>
 
 ```cpp
 #include <cstdio>
@@ -1420,7 +1411,6 @@ int main() {
 
 ## Example 5 · Full code (2/2)
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 
@@ -1539,7 +1529,6 @@ row = blockIdx.y * blockDim.y + threadIdx.y;      // y → rows
 
 ## Example 6 · Step by step (2/2): follow six threads
 
-<style scoped>table { font-size: 17px; } li { font-size: 22px; }</style>
 
 | `blockIdx` (x,y) | `threadIdx` (x,y) | `col = bx*4 + tx` | `row = by*4 + ty` | In bounds? | flat `row*7 + col` | value `10*row + col` |
 |:-:|:-:|:-:|:-:|:-:|:-:|:-:|
@@ -1560,7 +1549,6 @@ row = blockIdx.y * blockDim.y + threadIdx.y;      // y → rows
 
 > 📁 `week08/cuda_c/06_matrix_2d.cu`
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 #include <cstdio>
@@ -1584,7 +1572,6 @@ __global__ void fill_matrix(int *out, int n_rows, int n_cols) {
 
 ## Example 6 · Full code (2/2)
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 int main() {
@@ -1702,15 +1689,13 @@ Threads 0–3 handle **3** elements each, threads 4–7 handle **2**: `4*3 + 4*2
 - Neighbouring threads still touch neighbouring addresses in every lap.
 - For simple kernels one-thread-per-element is just as fast; grid-stride suits reusable kernels.
 
-<style scoped>section { font-size: 22px; } table { font-size: 17px; } pre { font-size: 15px; }</style>
+
 
 ---
 
 ## Example 7 · Full code (1/3)
 
 > 📁 `week08/cuda_c/07_grid_stride.cu`
-
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 #include <cstdio>
@@ -1742,7 +1727,6 @@ __global__ void saxpy(float a, const float *x, float *y, int n) {
 
 ## Example 7 · Full code (2/3): Part A
 
-<style scoped>pre { font-size: 14px; }</style>
 
 ```cpp
 int main() {
@@ -1767,7 +1751,6 @@ int main() {
 
 ## Example 7 · Full code (3/3): Part B
 
-<style scoped>pre { font-size: 13px; }</style>
 
 ```cpp
     // ---- Part B --------------------------------------------------------------
@@ -1952,7 +1935,7 @@ def my_kernel(a, b, c):
 | You control | What to compute | How each thread computes |
 | Use when | Standard operations | Custom / fused operations |
 
-<style scoped>section { font-size: 22px; } table { font-size: 18px; } pre { font-size: 16px; }</style>
+
 
 ---
 
@@ -2016,7 +1999,6 @@ def vector_add(a, b, c):
 
 > 📁 `week08/06_indexing_numba.py` re-runs Examples 1, 2, 3, 6, 7. Numba, like C, does **not** bounds-check.
 
-<style scoped>table { font-size: 16px; } blockquote { margin-top: 6px; }</style>
 
 ---
 
