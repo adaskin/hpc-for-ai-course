@@ -54,13 +54,8 @@ In Track D, an AI system is also the *object* of study; Section 4 lists the extr
 ## 3. Constraints
 
 - **Hardware.** Everything must run on **free Google Colab (T4 GPU)** or hardware you already have. If you use anything else (a lab GPU, Kaggle, your own machine), say so in the proposal and report its specifications. Compare conditions **only on the same hardware**.
-- **Reproducibility.** Include `requirements.txt` (or an environment file) and a `README.md` with run instructions. Record library versions and the output of `nvidia-smi`.
-- **Fair benchmarks.** Warm-up runs, **at least 5 timed runs**, report the median and the spread (min-max or interquartile range). Synchronise the GPU before you stop the clock (Week 6, Week 8).
-- **Correctness first.** An optimised version must produce the same results as the baseline (within a stated tolerance), or you must measure how much quality it loses.
-- **Live demo.** Show a short live demo (about 2 minutes). Colab GPUs are not guaranteed, so bring a recorded backup.
 
-### Know your GPU: the Colab T4
-
+**Know your GPU: the Colab T4**
 | Property | NVIDIA T4 (Turing, compute capability 7.5) |
 |---|---|
 | Memory | 16 GB GDDR6, about **320 GB/s** |
@@ -70,9 +65,15 @@ In Track D, an AI system is also the *object* of study; Section 4 lists the extr
 
 Plan around the T4. Many tutorials assume bf16 or FlashAttention-2; on the T4 use fp16 with loss scaling, and PyTorch's built-in `scaled_dot_product_attention`.
 
+- **Reproducibility.** Include `requirements.txt` (or an environment file) and a `README.md` with run instructions. Record library versions and the output of `nvidia-smi`.
+- **Fair benchmarks.** Warm-up runs, **at least 5 timed runs**, report the median and the spread (min-max or interquartile range). Synchronise the GPU before you stop the clock (Week 6, Week 8).
+- **Correctness first.** An optimised version must produce the same results as the baseline (within a stated tolerance), or you must measure how much quality it loses.
+- **Live demo.** Show a short live demo (about 2 minutes). Colab GPUs are not guaranteed, so bring a recorded backup.
 ---
 
 ## 4. Tracks
+
+Choose one of the following.
 
 | Track | Topic | Builds on |
 |:-:|---|---|
@@ -81,8 +82,6 @@ Plan around the T4. Many tutorials assume bf16 or FlashAttention-2; on the T4 us
 | **C** | Custom GPU kernels | GPU architecture (Week 6), CUDA kernels (Week 8), memory hierarchy and profiling (Week 9) |
 | **D** | AI-directed model diagnosis and weight editing | Measurement (Week 1), GPU inference cost (Weeks 6, 13) |
 | **E** | Your own project | Any part of the course |
-
-Some of these tools are taught **after** the proposal deadline. You are not expected to know them yet: choose by interest, and the lectures will catch up.
 
 ### Track A: Memory-Efficient Training
 
@@ -170,7 +169,7 @@ If your operation is used in training, also check its backward pass and gradient
 
 **Goal.** Investigate whether an AI system can diagnose and repair a failure in another model through targeted interventions, including direct weight edits, and what that repair costs and buys in compute.
 
-**Background.** In *Sparks of Weight-Space Programming* (Takehi, Teoh, Zhang and Khattab, MIT CSAIL, November 2026), an LLM agent (OpenAI's GPT-6 Astra) inspected the weights of Qwen3.5-0.8B with Python and edited them **without gradient-based training**. Its edit changed 131,072 weights (about 0.016%) in layers 15 and 19 and raised MATH-500 accuracy from 7.9% to 48.1% under the authors' settings. Read the post carefully before you build on it:
+**Background.** In *Sparks of Weight-Space Programming* (Takehi, Teoh, Zhang and Khattab, MIT CSAIL, November 2026; [https://rikiyat.github.io/blog/weight-space-programming/](https://rikiyat.github.io/blog/weight-space-programming/) ), an LLM agent (OpenAI's GPT-6 Astra) inspected the weights of Qwen3.5-0.8B with Python and edited them **without gradient-based training**. Its edit changed 131,072 weights (about 0.016%) in layers 15 and 19 and raised MATH-500 accuracy from 7.9% to 48.1% under the authors' settings. Read the post carefully before you build on it:
 
 - The gain came mostly from **removing repetitive looping**: before the edit, 93% of MATH-500 answers ran to the token limit. In the authors' words, fixing loops "lets the model finish answers it could already work out"; it did not add mathematical knowledge.
 - On Gemma 3 270M, which rarely loops, the agent could **not** improve math accuracy.
@@ -283,29 +282,7 @@ Do not assume that quantisation gives a proportional speedup, that kernel fusion
 
 ---
 
-## 6. Proposal (Week 10, one page)
-
-Submit one page (PDF or Markdown in your repository) with:
-
-```text
-Title:
-Members:
-Track (A-E):
-Research question (one sentence):
-System: model / dataset / workload, and why it matters
-Hardware: e.g. Colab T4 16 GB, plus anything else you will use
-Baseline: what you will run first, and how you will measure it
-Interventions (at least 2): what you will change, one variable at a time
-Metrics: time, memory, utilisation, quality
-Compute plan: estimated GPU-hours; what you will cut if time runs short
-Risks and fallback: what could block you, and your plan B
-```
-
-Before you submit, **run the baseline once on the T4** (or your hardware) so you know the model fits and the workload finishes in reasonable time. You will get feedback within a week.
-
----
-
-## 7. Required Figures (4-6 total)
+## 6. Required Figures (4-6 total)
 
 Every figure must have a caption that states a **conclusion**, not just a description.
 
@@ -322,7 +299,7 @@ Every figure must have a caption that states a **conclusion**, not just a descri
 
 ---
 
-## 8. Report Structure (6-8 pages, excluding references and appendices)
+## 7. Report Structure (6-8 pages, excluding references and appendices)
 
 | Section | Pages | Content |
 |---------|:-----:|---------|
@@ -338,7 +315,7 @@ Every figure must have a caption that states a **conclusion**, not just a descri
 
 ---
 
-## 9. Presentation (Weeks 14-15, 15 min + 5 min Q&A)
+## 8. Presentation (Weeks 14-15, 15 min + 5 min Q&A)
 
 Tell an **evidence story**:
 
@@ -352,9 +329,9 @@ End with one slide: **"What surprised us"** and **"What we would do with more ti
 
 ---
 
-## 10. Grading
+## 9. Grading
 
-### Report and Code (20 points)
+### Report and Code (50 points)
 
 | Criterion | Weight | Excellent |
 |-----------|:------:|-----------|
@@ -364,7 +341,7 @@ End with one slide: **"What surprised us"** and **"What we would do with more ti
 | **Interpretation and critical analysis** | 15% | Explanations backed by evidence; trade-offs and threats to validity discussed honestly |
 | **Report quality and related work** | 10% | Well structured, conclusion-first figure captions, relevant related work |
 
-### Presentation (10 points)
+### Presentation (50 points)
 
 | Criterion | Weight | Excellent |
 |-----------|:------:|-----------|
@@ -372,12 +349,6 @@ End with one slide: **"What surprised us"** and **"What we would do with more ti
 | Code explanation | 25% | Can explain any code line by line |
 | Technical depth and Q&A | 25% | Handles questions confidently; connects results to course concepts |
 | Demo and storytelling | 20% | Smooth demo, clear narrative |
-
-### Bonus (up to +3 points)
-
-- Repeat your main comparison on a second GPU type and explain the differences
-- A roofline analysis of your key operator, with measured and peak numbers
-- A reusable benchmark script others could run on their own model
 
 ### Penalties
 
@@ -390,7 +361,7 @@ End with one slide: **"What surprised us"** and **"What we would do with more ti
 
 ---
 
-## 11. Practical Tips
+## 10. Practical Tips
 
 **Time GPU code correctly** (Week 6, Week 8):
 
@@ -434,7 +405,7 @@ nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used --format=csv -l 1 >
 
 ---
 
-## 12. FAQ
+## 11. FAQ
 
 **Q: Can we use our own or a lab GPU instead of Colab?**  
 A: Yes. Report its specifications, and run every condition you compare on the same GPU. Your code should still run on a T4 at a smaller scale, so others can reproduce it.
@@ -459,50 +430,7 @@ A: Plan your main experiments to fit in a few Colab sessions (a few GPU-hours ea
 
 ---
 
-## 13. Timeline
-
-| Week | Milestone |
-|------|-----------|
-| Week 8 | Brief released. Form groups, choose a track |
-| Week 9 | Baseline running on the T4; draft proposal |
-| **Week 10** | **Proposal due** (one page). Feedback within a week |
-| Week 11 | Interventions implemented; first measurements |
-| **Week 12** | **Check-in** (5 min per group): baseline, first results, plan for the remaining runs |
-| Week 13 | Controlled comparisons finished; results frozen; report written |
-| **Week 14** | **Report and code due** (before the session). Presentations, part 1 |
-| Week 15 | Presentations, part 2 |
-
----
-
-## 14. Submission Checklist
-
-**Proposal (Week 10):**
-- [ ] One page, all fields of Section 6 filled in
-- [ ] Baseline run once on the target hardware
-
-**Report:**
-- [ ] PDF, 6-8 pages excluding references and appendices
-- [ ] Research question, system, workload, hardware and software versions
-- [ ] Baseline and at least 2 interventions, measured the same way
-- [ ] Wall-clock time, peak memory, GPU utilisation and a quality metric for every condition
-- [ ] Profiling or diagnostic evidence
-- [ ] 4-6 figures with conclusion-first captions
-- [ ] Limitations, threats to validity and related work
-
-**Code:**
-- [ ] GitHub repository link
-- [ ] `requirements.txt` and `README.md` with instructions to reproduce
-- [ ] All figures generated by code
-- [ ] Raw results (CSV or JSON) and logs, including agent transcripts for Track D
-
-**Presentation:**
-- [ ] 15-minute slides ending with "What surprised us" / "What we would do with more time"
-- [ ] Live demo tested, plus a recorded backup
-- [ ] Every figure and code block rehearsed
-
----
-
-## 15. References and Starting Points
+## References and Starting Points
 
 **Track D:**
 - R. Takehi, J. Teoh, A. Zhang, O. Khattab. [*Sparks of Weight-Space Programming: LLMs can natively read & write neural network weights*](https://rikiyat.github.io/blog/weight-space-programming/). MIT CSAIL blog post, 2 November 2026.
