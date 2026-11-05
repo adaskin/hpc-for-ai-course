@@ -16,3 +16,14 @@ The Ray-talk figures are from 2019 and show the Ray of that time; use the Ray do
 | `ray-talk-tree-chain.png`, `ray-talk-tree-balanced.png` | R. Nishihara, *Distributed Systems and AI: Ray, Programming at Any Scale*, UC Berkeley DS100, 5 Aug 2019, slides 60 and 67 (tree reduction). Slides (c) RISELab. |
 | `w05-dask.png` (in your repo) | Dask documentation, *10 Minutes to Dask*: https://docs.dask.org/en/stable/_images/dask-overview.svg |
 | three task-graph PNGs (loaded from the web by the slide) | Dask documentation, *10 Minutes to Dask*: https://docs.dask.org/en/stable/_images/10_minutes_dataframe_graph.png, `10_minutes_array_graph.png`, `10_minutes_bag_graph.png` |
+
+## Week 8 figures
+
+The four `w08-*.png` figures are borrowed for teaching, with attribution. Check NVIDIA's terms before publishing the slides outside the course.
+
+| File | Source |
+|---|---|
+| `w08-gpu-cpu-system.png` | NVIDIA, *CUDA Programming Guide*, Programming Model, Figure 2 (host/device system with SMs): https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html |
+| `w08-grid-of-thread-blocks.png` | same page, Figure 3 (grid of thread blocks) |
+| `w08-thread-block-scheduling.png` | same page, Figure 4 (thread blocks scheduled onto SMs) |
+| `w08-active-warp-lanes.png` | same page, Figure 7 (active warp lanes, even-indexed lanes active) |

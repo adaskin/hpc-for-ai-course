@@ -56,10 +56,11 @@ By the end of this lecture and lab, you can:
 
 1. Explain **host, device, kernel, launch, grid, block, thread, warp, and SM**.
 2. Describe how a kernel launch becomes blocks scheduled onto SMs.
-3. Calculate 1D and 2D launch geometry and global thread indices safely.
-4. Move data between host and device and synchronize correctly.
-5. Write, verify, and benchmark basic Numba CUDA kernels.
-6. Decide when a custom kernel is justified—and when a library is better.
+3. Calculate 1D and 2D launch geometry and global thread indices safely, by hand and in code.
+4. Write a complete CUDA C/C++ program: allocate, copy, launch, check errors, copy back, free.
+5. Move data between host and device and synchronize correctly.
+6. Write, verify, and benchmark basic Numba CUDA kernels.
+7. Decide when a custom kernel is justified—and when a library is better.
 
 > **Prerequisite:** Week 6's conceptual GPU architecture and CuPy array operations.
 
@@ -105,14 +106,17 @@ Three reasons:
 | Part | Content | Time |
 |------|---------|:----:|
 | I | Why write kernels (motivation + recap) | 10 min |
-| II | General CUDA programming model + indexing | 30 min |
-| III | Numba CUDA: your first kernel | 25 min |
-| IV | Memory transfers and device arrays | 15 min |
+| II | General CUDA programming model + indexing | 25 min |
+| III | **Learning by example: seven CUDA C/C++ programs** | 40 min |
+| IV | Numba CUDA: your first kernel | 15 min |
+| V | Memory transfers and device arrays | 10 min |
 | *Break* | | 10 min |
-| V | AI examples: ReLU, softmax, attention scores | 20 min |
-| VI | Performance: when your kernel wins (and loses) | 10 min |
-| VII | Connection to the course + lab | 10 min |
-| **Total** | | ~130 min |
+| VI | AI examples: ReLU, softmax, attention scores | 20 min |
+| VII | Performance: when your kernel wins (and loses) | 10 min |
+| VIII | Connection to the course + lab | 10 min |
+| **Total** | | ~150 min |
+
+> Short on time? Do Examples 1–5 live; Examples 6–7 can move to the lab or be self-study.
 
 ---
 
@@ -242,14 +246,14 @@ Python / C++ starts the program
 
 ## A CUDA Program in Six Steps
 
-| Step | Where | Typical Numba CUDA operation |
-|:---:|---|---|
-| 1 | Host | Create NumPy inputs and choose `N` |
-| 2 | Host → device | `cuda.to_device(a_np)` |
-| 3 | Host | Allocate output with `cuda.device_array(...)` |
-| 4 | Host launches | `kernel[blocks, threads](...)` |
-| 5 | Device | Each thread computes an index and writes output |
-| 6 | Device → host | `out_d.copy_to_host()`; verify with NumPy |
+| Step | Where | CUDA C/C++ (Part III) | Numba CUDA (Part IV) |
+|:---:|---|---|---|
+| 1 | Host | `malloc`, fill `h_a`, choose `N` | Create NumPy inputs, choose `N` |
+| 2 | Host → device | `cudaMalloc` + `cudaMemcpy(..., HostToDevice)` | `cuda.to_device(a_np)` |
+| 3 | Host | `cudaMalloc` for the output `d_c` | `cuda.device_array(...)` |
+| 4 | Host launches | `kernel<<<blocks, threads>>>(...)` | `kernel[blocks, threads](...)` |
+| 5 | Device | Each thread computes an index, writes output | same |
+| 6 | Device → host | `cudaMemcpy(..., DeviceToHost)`, `cudaFree` | `out_d.copy_to_host()`; verify with NumPy |
 
 > A kernel does **not return a Python value**. It communicates by writing to memory.
 
@@ -399,9 +403,12 @@ Rules:
 
 ## Thread Indexing: The Core Formula
 
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;                    // CUDA C/C++
+```
+
 ```python
-# Each thread computes its global index:
-i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x          # Numba CUDA (or: i = cuda.grid(1))
 ```
 
 | Symbol | Meaning | Example |
@@ -411,11 +418,12 @@ i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
 | `threadIdx.x` | Which thread within my block? | Thread 42 |
 | **Global index** | `3 * 256 + 42 = 810` | Element 810 |
 
-**Worked example:** `N = 1,000,000`, 256 threads/block →
-`3,907 blocks`, `1,000,192 launched threads`, and `192` threads exit.
+> **Think of a hotel.** A block is a floor with `blockDim.x` rooms. Your room number is
+> *(floors below you × rooms per floor) + your place on your floor*: `3 * 256 + 42 = 810`.
 
 > Write what thread `i` does—not the host-side `for i in range(N)` loop.
 > Hardware schedules the launched threads in warps and waves.
+> **→ Part III, Examples 1 and 2:** the formula on 12 threads, every index worked out.
 
 ---
 
@@ -434,6 +442,8 @@ if row < n_rows and col < n_cols:
     out[row, col] = ...
 ```
 
+In CUDA C/C++: same two lines without `cuda.`, and a flat array `out[row * n_cols + col]`.
+
 ```python
 threads = (16, 16)  # (x=columns, y=rows), 256 threads
 blocks = ((n_cols + 15) // 16,
@@ -442,7 +452,7 @@ kernel[blocks, threads](...)
 ```
 
 > `cuda.grid(2)` returns `(x, y)`, **not automatically `(row, col)`**.
-> For a 4096×4096 matrix, this launch creates 256×256 blocks and 16.7M threads.
+> A 4096×4096 matrix → 256×256 blocks, 16.7M threads. **→ Part III, Example 6:** a 5 × 7 matrix by hand.
 
 ---
 
@@ -461,6 +471,7 @@ Why? Grid size is rounded up:
 - **192 threads have no work.** Without the check → out-of-bounds access → crash or garbage.
 
 > Always include the bounds check. It's nearly free (one comparison per thread).
+> **→ Part III, Example 3:** watch the missing check overwrite memory.
 
 ---
 
@@ -477,8 +488,15 @@ blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
 my_kernel[blocks_per_grid, threads_per_block](a, b, c, N)
 ```
 
+```cpp
+int threads = 256;
+int blocks  = (N + threads - 1) / threads;       // integer ceil(N / threads)
+my_kernel<<<blocks, threads>>>(d_a, d_b, d_c, N);
+```
+
 > **Starting point, not a law:** try 128 or 256 for simple element-wise kernels,
 > then measure. Week 9 covers occupancy and tuning.
+> **→ Part III, Examples 4 and 5:** the formula for many `N`, hardware limits, and error checking.
 
 ---
 
@@ -501,12 +519,1093 @@ while i < c.size:
 
 > Use one-thread-per-element for today's first kernels; remember grid-stride
 > for larger or reusable kernels. Correctness still requires the `while i < N` check.
+> **→ Part III, Example 7:** which thread handles which element, with `N = 20` and 8 threads.
+
+---
+
+## From Concepts to Code: Your Roadmap
+
+You now know the vocabulary. The next part makes it concrete.
+
+| Concept slide (Part II) | Worked example (Part III) |
+|---|---|
+| Thread indexing: the core formula | **1** Hello, threads · **2** Vector add, `N = 10` |
+| Bounds checking | **3** The missing bounds check |
+| Launch configuration | **4** Launch configuration · **5** Error checking |
+| 2D indexing | **6** A 5 × 7 matrix |
+| Grid-stride loop | **7** Grid-stride loop |
+| Host/device memory, six steps | **2** (the full workflow, line by line) |
+
+> Every example: **problem → step by step → full code → expected output.**
 
 ---
 
 <!-- _class: lead -->
 
 # Part III
+# Learning by Example: CUDA C/C++
+
+---
+
+## How to read Part III
+
+Seven small programs. Each has the same four slides:
+**Problem** → **Step by step** (worked numbers: do it on paper first) → **Full code** → **Expected output**.
+
+| # | Example | Concept it teaches |
+|:-:|---|---|
+| 1 | Hello, threads | The core index formula |
+| 2 | Vector add, N = 10 | Memory: allocate → copy → launch → copy back → free |
+| 3 | The missing bounds check | Why `if (i < n)` is not optional |
+| 4 | Launch configuration | `blocks = ceil(N / threads)`, hardware limits |
+| 5 | Error checking | `CUDA_CHECK`, `cudaGetLastError` |
+| 6 | A 5 × 7 matrix | 2D indexing |
+| 7 | Grid-stride loop | One fixed grid for any `N` |
+
+> Habit to build: **predict the output on paper, then run the program.**
+
+---
+
+## CUDA C++ in four new things
+
+A `.cu` file is ordinary C++ plus:
+
+| New thing | Example | Meaning |
+|---|---|---|
+| **`__global__`** | `__global__ void k(...)` | A **kernel**: runs on the GPU, called from the CPU, returns `void` |
+| **Launch syntax** | `k<<<blocks, threads>>>(args)` | Start `blocks × threads` copies of `k` |
+| **Built-in variables** | `threadIdx.x`, `blockIdx.x`, `blockDim.x`, `gridDim.x` | Filled in by the hardware, different in every thread |
+| **Runtime API** | `cudaMalloc`, `cudaMemcpy`, `cudaFree` | Manage GPU memory; the `cuda` prefix marks CUDA calls |
+
+Everything else (`int`, `if`, `for`, `printf`, arrays) is the C/C++ you already know.
+
+> `main()` runs on the **host** (CPU). Kernels run on the **device** (GPU).
+> The two sides have **separate memories**. This is what makes CUDA feel new.
+
+---
+
+## Compile and run (Colab or your own GPU machine)
+
+```bash
+nvcc -o 01_hello_indices 01_hello_indices.cu    # compile host + device code
+./01_hello_indices                               # run it
+```
+
+On Colab (Runtime → Change runtime type → **T4 GPU**):
+
+```python
+!git clone -q https://github.com/adaskin/hpc-for-ai-course
+%cd hpc-for-ai-course/lectures/week08/cuda_c
+!nvcc -o 01_hello_indices 01_hello_indices.cu && ./01_hello_indices
+```
+
+- `nvcc` splits the file: host code goes to your C++ compiler, kernels to the GPU compiler.
+- Error `no kernel image is available`? Add `-arch=native` (or `-arch=sm_75` for a T4).
+- All seven programs are in 📁 `week08/cuda_c/`.
+
+---
+
+## Example 1 · Problem: "Who am I?"
+
+**Problem.** Launch 12 threads. Make every thread work out its own unique number, 0 to 11.
+
+Why this matters: all threads run **the same code**. The only way to give thread 7 different work from thread 3 is for each thread to compute *where it is* and act on that.
+
+```text
+blockDim.x = 4 threads in every block        gridDim.x = 3 blocks
+
+            block 0           block 1           block 2
+          ┌──┬──┬──┬──┐     ┌──┬──┬──┬──┐     ┌──┬──┬──┬──┐
+threadIdx │ 0│ 1│ 2│ 3│     │ 0│ 1│ 2│ 3│     │ 0│ 1│ 2│ 3│     ← the hardware gives you this
+          └──┴──┴──┴──┘     └──┴──┴──┴──┘     └──┴──┴──┴──┘
+global i     0  1  2  3        4  5  6  7        8  9 10 11       ← we want to compute this
+```
+
+> The hardware tells each thread its block number and its position **inside the block**.
+> It does **not** hand out a global number. We build it.
+
+---
+
+## Example 1 · Step by step
+
+**Launch:** `hello_indices<<<3, 4>>>()` → `gridDim.x = 3`, `blockDim.x = 4`.
+
+1. Thread asks: *how many threads sit in the blocks before mine?* → `blockIdx.x * blockDim.x`
+   (block 2 has 2 full blocks before it: `2 * 4 = 8` threads)
+2. Thread adds *my place inside my own block* → `+ threadIdx.x`
+
+**`i = blockIdx.x * blockDim.x + threadIdx.x`**
+
+| `blockIdx.x` | `blockIdx.x * blockDim.x` | `threadIdx.x` | `i` |
+|:-:|:-:|:-:|:-:|
+| 0 | `0 * 4 = 0` | 0, 1, 2, 3 | **0, 1, 2, 3** |
+| 1 | `1 * 4 = 4` | 0, 1, 2, 3 | **4, 5, 6, 7** |
+| 2 | `2 * 4 = 8` | 0, 1, 2, 3 | **8, 9, 10, 11** |
+
+> **Check:** the last thread is block 2, thread 3 → `2*4 + 3 = 11 = gridDim.x * blockDim.x - 1`.
+> Every number 0…11 appears exactly once: no gaps, no duplicates.
+
+---
+
+## Example 1 · Full code
+
+> 📁 `week08/cuda_c/01_hello_indices.cu`
+
+```cpp
+#include <cstdio>
+
+__global__ void hello_indices() {
+    // The core formula: block number * threads per block + thread number in block
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    printf("block %d, thread %d  ->  i = %d * %d + %d = %2d\n",
+           blockIdx.x, threadIdx.x, blockIdx.x, blockDim.x, threadIdx.x, i);
+}
+
+int main() {
+    // <<<blocks, threads_per_block>>> : 3 blocks x 4 threads = 12 threads in total
+    hello_indices<<<3, 4>>>();
+
+    // Kernel launches are asynchronous: wait here, otherwise main() may exit
+    // before the GPU has printed anything.
+    cudaDeviceSynchronize();
+    return 0;
+}
+```
+
+- `printf` works in kernels (tiny experiments only). `cudaDeviceSynchronize()` waits for the GPU:
+  without it `main()` may exit first and you see **no output**.
+
+---
+
+## Example 1 · Expected output
+
+```text
+block 0, thread 0  ->  i = 0 * 4 + 0 =  0
+block 0, thread 1  ->  i = 0 * 4 + 1 =  1
+block 0, thread 2  ->  i = 0 * 4 + 2 =  2
+block 0, thread 3  ->  i = 0 * 4 + 3 =  3
+block 1, thread 0  ->  i = 1 * 4 + 0 =  4
+block 1, thread 1  ->  i = 1 * 4 + 1 =  5
+block 1, thread 2  ->  i = 1 * 4 + 2 =  6
+block 1, thread 3  ->  i = 1 * 4 + 3 =  7
+block 2, thread 0  ->  i = 2 * 4 + 0 =  8
+block 2, thread 1  ->  i = 2 * 4 + 1 =  9
+block 2, thread 2  ->  i = 2 * 4 + 2 = 10
+block 2, thread 3  ->  i = 2 * 4 + 3 = 11
+```
+
+> **The order of lines may differ on your GPU.** Threads and blocks run in no guaranteed order,
+> so the *same twelve lines* can appear shuffled. Sort by `i` and compare with the table.
+> **Try it:** change `<<<3, 4>>>` to `<<<2, 5>>>`. Predict the 10 values of `i` first.
+
+---
+
+## Example 2 · Problem: add two vectors
+
+**Problem.** Given `a = [0, 1, 2, …, 9]` and `b = [0, 10, 20, …, 90]`, compute `c[i] = a[i] + b[i]` **on the GPU** and print `c`.
+
+Two things make this harder than "hello":
+
+1. **Two memories.** The GPU cannot read CPU arrays, and the CPU cannot read GPU arrays.
+   Data must be *allocated* on the GPU and *copied* across.
+2. **`N = 10` is not a multiple of 4.** With blocks of 4 threads we need `⌈10/4⌉ = 3` blocks = 12 threads. Two threads have no element.
+
+```text
+thread i :   0  1  2  3 |  4  5  6  7 |  8  9 10 11
+element  :   0  1  2  3 |  4  5  6  7 |  8  9  –  –      ( – = nothing to do: skip )
+              block 0       block 1        block 2
+```
+
+---
+
+## Example 2 · Step by step (1/2): the data
+
+<style scoped>table { font-size: 18px; } blockquote { margin-top: 8px; }</style>
+
+Convention: `h_` = **host** pointer (CPU memory), `d_` = **device** pointer (GPU memory).
+
+| Step | Call | What it means |
+|:-:|---|---|
+| 1 | `malloc(bytes)` | CPU arrays. `bytes = N * sizeof(float) = 10 * 4 = 40` |
+| 2 | `cudaMalloc(&d_a, bytes)` | Reserve 40 bytes **on the GPU**. It writes the GPU address into `d_a`, which is why we pass `&d_a` |
+| 3 | `cudaMemcpy(d_a, h_a, bytes, cudaMemcpyHostToDevice)` | Copy CPU → GPU. Order: **destination, source**, size, direction (like `memcpy`) |
+| 4 | `vector_add<<<3, 4>>>(d_a, d_b, d_c, N)` | Start 12 threads. Arguments are passed **by value**: pointers are GPU addresses, `N` is a plain `int` |
+| 5 | `cudaMemcpy(h_c, d_c, bytes, cudaMemcpyDeviceToHost)` | Copy GPU → CPU. This call also **waits** until the kernel has finished |
+| 6 | `cudaFree(d_a)` / `free(h_a)` | Give back both kinds of memory |
+
+> A `d_` pointer is just a number that only means something **on the GPU**.
+> The CPU must never dereference it (`d_c[0]` in `main` crashes).
+
+---
+
+## Example 2 · Step by step (2/2): what each thread does
+
+Kernel: `i = blockIdx.x * blockDim.x + threadIdx.x;  if (i < n) c[i] = a[i] + b[i];`
+
+| `i` | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `blockIdx.x` | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 1 | 2 | 2 | 2 | 2 |
+| `threadIdx.x` | 0 | 1 | 2 | 3 | 0 | 1 | 2 | 3 | 0 | 1 | 2 | 3 |
+| `i < 10` ? | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| `a[i]` | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | – | – |
+| `b[i]` | 0 | 10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 | – | – |
+| **`c[i]`** | **0** | **11** | **22** | **33** | **44** | **55** | **66** | **77** | **88** | **99** | idle | idle |
+
+- Threads 10 and 11 evaluate `10 < 10` and `11 < 10`: both false → they do **nothing**.
+- Every other thread does exactly **one** addition: no loop anywhere.
+
+---
+
+## Example 2 · Full code (1/2)
+
+> 📁 `week08/cuda_c/02_vector_add_small.cu`
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+#include <cstdio>
+#include <cstdlib>
+
+__global__ void vector_add(const float *a, const float *b, float *c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;   // 1. who am I?
+    if (i < n) {                                     // 2. is there work for me?
+        c[i] = a[i] + b[i];                          // 3. do my one piece of work
+    }
+}
+
+int main() {
+    const int N = 10;
+    const size_t bytes = N * sizeof(float);          // 10 * 4 = 40 bytes
+
+    // Step 1: allocate and fill the HOST (CPU) arrays
+    float *h_a = (float *)malloc(bytes);
+    float *h_b = (float *)malloc(bytes);
+    float *h_c = (float *)malloc(bytes);
+    for (int i = 0; i < N; i++) {
+        h_a[i] = (float)i;            // 0, 1, 2, ...
+        h_b[i] = 10.0f * i;           // 0, 10, 20, ...
+    }
+
+    // Step 2: allocate DEVICE (GPU) arrays
+    float *d_a, *d_b, *d_c;
+    cudaMalloc(&d_a, bytes);
+    cudaMalloc(&d_b, bytes);
+    cudaMalloc(&d_c, bytes);
+```
+
+---
+
+## Example 2 · Full code (2/2)
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+    // Step 3: copy the inputs host -> device
+    cudaMemcpy(d_a, h_a, bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, bytes, cudaMemcpyHostToDevice);
+
+    // Step 4: choose the launch configuration and launch
+    int threads = 4;
+    int blocks  = (N + threads - 1) / threads;       // ceil(10 / 4) = 3
+    printf("N = %d, threads/block = %d, blocks = %d, launched threads = %d, idle threads = %d\n",
+           N, threads, blocks, blocks * threads, blocks * threads - N);
+    vector_add<<<blocks, threads>>>(d_a, d_b, d_c, N);
+
+    // Step 5: copy the result device -> host (this call waits for the kernel to finish)
+    cudaMemcpy(h_c, d_c, bytes, cudaMemcpyDeviceToHost);
+
+    printf("c =");
+    for (int i = 0; i < N; i++) printf(" %.0f", h_c[i]);
+    printf("\n");
+
+    // Step 6: free everything we allocated
+    cudaFree(d_a); cudaFree(d_b); cudaFree(d_c);
+    free(h_a);     free(h_b);     free(h_c);
+    return 0;
+}
+```
+
+> Error checking is left out **on purpose** so the six steps stay visible. Example 5 adds it.
+
+---
+
+## Example 2 · Expected output
+
+```text
+N = 10, threads/block = 4, blocks = 3, launched threads = 12, idle threads = 2
+c = 0 11 22 33 44 55 66 77 88 99
+```
+
+Check against the table: `c[9] = a[9] + b[9] = 9 + 90 = 99` ✓
+
+**Classic memory mistakes** (and what you will see):
+
+| Mistake | Symptom |
+|---|---|
+| `printf("%f", d_c[0])` in `main` (GPU pointer on the CPU) | Segmentation fault |
+| Passing `h_a` (CPU pointer) to the kernel | "illegal memory access", reported *later* (Example 5) |
+| `bytes = N` instead of `N * sizeof(float)` | Only ¼ of the array copied; the rest is garbage |
+| Swapped `cudaMemcpy` source/destination or wrong direction flag | Error or wrong data |
+| Forgetting `cudaFree` in a loop | GPU memory fills up, then `cudaMalloc` fails |
+
+---
+
+## Example 3 · Problem: what if I skip the bounds check?
+
+**Problem.** Fill `out[i] = i` for `n = 10` elements, launching `3 × 4 = 12` threads.
+What do threads 10 and 11 do if nothing stops them?
+
+- C and CUDA do **not** check array bounds. There is no exception. The write simply happens.
+- To make the damage visible *and* safe, we allocate **12** ints and fill all of them with `-1`.
+  Cells 10 and 11 are "guard cells": in real code they would belong to someone else.
+
+```text
+index          0  1  2  3  4  5  6  7  8  9 | 10 11
+start         -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 | -1 -1
+               └────────── our n = 10 ──────┘  └ guard cells
+```
+
+> We run two kernels on the same launch `<<<3, 4>>>`: one **with** `if (i < n)`, one **without**.
+
+---
+
+## Example 3 · Step by step
+
+**With the check** (`fill_safe`):
+
+| thread `i` | 0 … 9 | 10 | 11 |
+|---|:-:|:-:|:-:|
+| `i < 10` ? | true | **false** | **false** |
+| action | `out[i] = i` | skip | skip |
+
+**Without the check** (`fill_unsafe`): every thread executes `out[i] = i`, so thread 10 writes `out[10]` and thread 11 writes `out[11]`.
+
+Expected: guard cells stay `-1` in the safe run, and become `10` and `11` in the unsafe run.
+
+> In a real program there are no guard cells. Those two writes land on whatever sits next to your array:
+> another array, allocator bookkeeping, or unmapped memory. Typical results: **wrong answers
+> somewhere else, a crash, or "works on my GPU, fails on yours".**
+
+---
+
+## Example 3 · Full code (1/2)
+
+> 📁 `week08/cuda_c/03_bounds_check.cu`
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+#include <cstdio>
+
+__global__ void fill_safe(int *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = i;            // threads 10 and 11 skip the write
+}
+
+__global__ void fill_unsafe(int *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    out[i] = i;                       // BUG: no bounds check -> threads 10, 11 write too
+}
+
+void show(const char *label, const int *h) {
+    printf("%-24s", label);
+    for (int i = 0; i < 12; i++) {
+        if (i == 10) printf(" |");    // everything right of "|" is beyond n
+        printf(" %2d", h[i]);
+    }
+    printf("\n");
+}
+```
+
+---
+
+## Example 3 · Full code (2/2)
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+int main() {
+    const int n = 10, total = 12;                    // 12 cells; only the first 10 are "ours"
+    int h[total];
+    int *d;
+    cudaMalloc(&d, total * sizeof(int));
+
+    // Run 1: with the bounds check
+    cudaMemset(d, 0xFF, total * sizeof(int));        // every byte 0xFF -> every int is -1
+    fill_safe<<<3, 4>>>(d, n);
+    cudaMemcpy(h, d, total * sizeof(int), cudaMemcpyDeviceToHost);
+    show("safe   (with i < n):", h);
+
+    // Run 2: without the bounds check
+    cudaMemset(d, 0xFF, total * sizeof(int));
+    fill_unsafe<<<3, 4>>>(d, n);
+    cudaMemcpy(h, d, total * sizeof(int), cudaMemcpyDeviceToHost);
+    show("unsafe (no check):", h);
+
+    cudaFree(d);
+    return 0;
+}
+```
+
+---
+
+## Example 3 · Expected output
+
+```text
+safe   (with i < n):      0  1  2  3  4  5  6  7  8  9 | -1 -1
+unsafe (no check):        0  1  2  3  4  5  6  7  8  9 | 10 11
+```
+
+- Left of `|`: the 10 elements we wanted. Right of `|`: the two guard cells.
+- In the unsafe run the guard cells were **overwritten**: the program printed no error at all.
+
+> **Rule:** whenever `blocks * threads` can exceed `N`, the first line after computing `i`
+> is `if (i < n)`. It costs one comparison; skipping it costs a bug that may not show up on your machine.
+
+---
+
+## Example 4 · Problem: how many blocks and threads?
+
+**Problem.** You have `N` elements. Choose `threads` per block and `blocks` so that
+
+1. there is **at least one thread per element** (nothing left uncomputed), and
+2. the launch is **legal** on the hardware.
+
+Questions this example answers:
+
+- What is the integer-only formula for `blocks`?
+- How many threads are wasted, and does it matter?
+- What block size should I pick, and what is the maximum?
+- What really happens if I round **down**?
+
+> We run `c = a + b` for `N = 1,000,000` with several block sizes and count wrong elements.
+
+---
+
+## Example 4 · Step by step
+
+1. **Pick `threads`:** 128 or 256 to start; limit **1024**; prefer a multiple of **32** (a warp).
+   (`100` threads → 4 warps, the last with only 4 active lanes.)
+2. **`blocks = (N + threads - 1) / threads`**: integer division truncates, so adding `threads - 1` first rounds **up**.
+3. **Launched = `blocks * threads`**; idle = launched − `N` (always `< threads`).
+4. **Keep `if (i < n)`** for the idle threads.
+
+<style scoped>table { font-size: 18px; }</style>
+
+| `N` | `(N + 255) / 256` | `blocks` | launched | idle |
+|---:|:-:|--:|--:|--:|
+| 256 | `511 / 256 = 1.99` → | **1** | 256 | 0 |
+| 257 | `512 / 256 = 2` → | **2** | 512 | 255 |
+| 1,000 | `1255 / 256 = 4.9` → | **4** | 1,024 | 24 |
+| 1,000,000 | `1,000,255 / 256 = 3907.2` → | **3,907** | 1,000,192 | 192 |
+
+> **Round down by mistake:** `N / 256 = 3906` blocks → `999,936` threads → the last **64 elements are never computed**.
+
+---
+
+## Example 4 · Full code (1/3)
+
+> 📁 `week08/cuda_c/04_launch_config.cu`
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+#include <cstdio>
+#include <cstdlib>
+
+#define CUDA_CHECK(call) do { cudaError_t e_ = (call); if (e_ != cudaSuccess) {            \
+    fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    exit(EXIT_FAILURE); } } while (0)
+
+__global__ void vector_add(const float *a, const float *b, float *c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) c[i] = a[i] + b[i];
+}
+
+// ceil(n / threads) using integer arithmetic only
+int ceil_div(int n, int threads) { return (n + threads - 1) / threads; }
+
+// Run the kernel with `blocks` x `threads`, return how many elements are wrong.
+int run_and_count_wrong(int n, int blocks, int threads,
+                        const float *d_a, const float *d_b, float *d_c, float *h_c) {
+    CUDA_CHECK(cudaMemset(d_c, 0, n * sizeof(float)));           // start from all zeros
+    vector_add<<<blocks, threads>>>(d_a, d_b, d_c, n);
+    CUDA_CHECK(cudaGetLastError());                              // was the launch valid?
+    CUDA_CHECK(cudaMemcpy(h_c, d_c, n * sizeof(float), cudaMemcpyDeviceToHost));
+    int wrong = 0;
+    for (int i = 0; i < n; i++)
+        if (h_c[i] != 3.0f * i) wrong++;                         // expected: i + 2i = 3i
+    return wrong;
+}
+```
+
+---
+
+## Example 4 · Full code (2/3)
+
+<style scoped>pre { font-size: 13px; }</style>
+
+```cpp
+int main() {
+    // ---- Part A: the formula ------------------------------------------------
+    printf("Part A: blocks = ceil(N / 256)\n");
+    printf("%12s %8s %16s %6s\n", "N", "blocks", "launched threads", "idle");
+    int ns[] = {1, 256, 257, 1000, 1000000, 10000000};
+    for (int k = 0; k < 6; k++) {
+        int n = ns[k], blocks = ceil_div(n, 256);
+        printf("%12d %8d %16d %6d\n", n, blocks, blocks * 256, blocks * 256 - n);
+    }
+
+    // ---- Part B: hardware limits ---------------------------------------------
+    cudaDeviceProp p;
+    CUDA_CHECK(cudaGetDeviceProperties(&p, 0));
+    printf("\nPart B: device 0 = %s\n", p.name);
+    printf("  max threads per block : %d\n", p.maxThreadsPerBlock);
+    printf("  warp size             : %d\n", p.warpSize);
+    printf("  streaming multiprocs  : %d\n", p.multiProcessorCount);
+
+    // ---- Part C: same answer, different launch configurations ---------------
+    const int N = 1000000;
+    size_t bytes = N * sizeof(float);
+    float *h_a = (float *)malloc(bytes), *h_b = (float *)malloc(bytes), *h_c = (float *)malloc(bytes);
+    for (int i = 0; i < N; i++) { h_a[i] = (float)i; h_b[i] = 2.0f * i; }   // c should be 3i
+    float *d_a, *d_b, *d_c;
+    CUDA_CHECK(cudaMalloc(&d_a, bytes));
+    CUDA_CHECK(cudaMalloc(&d_b, bytes));
+    CUDA_CHECK(cudaMalloc(&d_c, bytes));
+    CUDA_CHECK(cudaMemcpy(d_a, h_a, bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_b, h_b, bytes, cudaMemcpyHostToDevice));
+```
+
+---
+
+## Example 4 · Full code (3/3)
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+    printf("\nPart C: N = %d\n", N);
+    printf("%10s %8s %16s %10s\n", "threads", "blocks", "launched threads", "wrong");
+    int sizes[] = {32, 128, 256, 1024};
+    for (int k = 0; k < 4; k++) {
+        int t = sizes[k], b = ceil_div(N, t);
+        int wrong = run_and_count_wrong(N, b, t, d_a, d_b, d_c, h_c);
+        printf("%10d %8d %16d %10d\n", t, b, b * t, wrong);
+    }
+
+    // The classic mistake: floor division leaves the tail uncomputed.
+    int b_floor = N / 256;                                       // 3906, NOT 3907
+    int wrong = run_and_count_wrong(N, b_floor, 256, d_a, d_b, d_c, h_c);
+    printf("\nfloor division: blocks = %d, launched threads = %d, wrong = %d\n",
+           b_floor, b_floor * 256, wrong);
+
+    CUDA_CHECK(cudaFree(d_a)); CUDA_CHECK(cudaFree(d_b)); CUDA_CHECK(cudaFree(d_c));
+    free(h_a); free(h_b); free(h_c);
+    return 0;
+}
+```
+
+---
+
+## Example 4 · Expected output
+
+<style scoped>pre { font-size: 15px; }</style>
+
+```text
+Part A: blocks = ceil(N / 256)
+           N   blocks launched threads   idle
+           1        1              256    255
+         256        1              256      0
+         257        2              512    255
+        1000        4             1024     24
+     1000000     3907          1000192    192
+    10000000    39063         10000128    128
+
+Part B: device 0 = Tesla T4            <- your GPU's name and numbers will differ
+  max threads per block : 1024
+  warp size             : 32
+  streaming multiprocs  : 40
+
+Part C: N = 1000000
+   threads   blocks launched threads      wrong
+        32    31250          1000000          0
+       128     7813          1000064          0
+       256     3907          1000192          0
+      1024      977          1000448          0
+
+floor division: blocks = 3906, launched threads = 999936, wrong = 64
+```
+
+> Every block size gives the **same correct answer**; only speed can differ (Week 9).
+> Rounding down gives **64 wrong elements**: exactly the tail that no thread covered.
+
+---
+
+## Example 5 · Problem: CUDA fails quietly
+
+**Problem.** A CUDA program can go wrong and still print *something*. Kernel launches return nothing, and a crash inside a kernel is reported **later**, by a different call. How do we find the bug, and the line that caused it?
+
+Three kinds of failure, three different places to look:
+
+| Failure | Example | Where the error shows up |
+|---|---|---|
+| Bad **launch configuration** | 2048 threads per block | Immediately, but only if you ask: `cudaGetLastError()` |
+| Failed **API call** | `cudaMalloc` of 1 TB | In the **return value** of that call |
+| Crash **inside the kernel** | Writing through a null pointer | **Later**: at the next call that waits (`cudaDeviceSynchronize`, `cudaMemcpy` back) |
+
+> Silent failures make wrong answers look like right answers. From now on **every** CUDA call is checked.
+
+---
+
+## Example 5 · Step by step
+
+**The macro.** Run the call, test the returned code, report **file and line**, and stop:
+
+```cpp
+#define CUDA_CHECK(call) do { cudaError_t e_ = (call); if (e_ != cudaSuccess) {            \
+    fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    exit(EXIT_FAILURE); } } while (0)
+```
+
+- `cudaError_t`: every `cuda…` call returns one; `cudaSuccess` means fine.
+- `cudaGetErrorString`: turns the code into words. `__FILE__`, `__LINE__`: where it happened.
+- `do { … } while (0)`: standard C trick so the macro behaves like one statement.
+
+**The recipe after every launch:**
+
+```cpp
+kernel<<<blocks, threads>>>(args);
+CUDA_CHECK(cudaGetLastError());        // was the LAUNCH valid?
+CUDA_CHECK(cudaDeviceSynchronize());   // did the kernel RUN without crashing? (debugging)
+```
+
+> A crash inside a kernel can be reported on the **next** `cudaMemcpy`: look *above* the reported line.
+
+---
+
+## Example 5 · Full code (1/2)
+
+> 📁 `week08/cuda_c/05_error_checking.cu`
+
+<style scoped>pre { font-size: 13px; }</style>
+
+```cpp
+#include <cstdio>
+#include <cstdlib>
+
+// The macro you will paste into every CUDA program from now on:
+// run the call, and stop with file + line + message if it failed.
+#define CUDA_CHECK(call) do { cudaError_t e_ = (call); if (e_ != cudaSuccess) {            \
+    fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    exit(EXIT_FAILURE); } } while (0)
+
+// For this demo only: print the result instead of exiting, so we can see all three.
+static void report(const char *what, cudaError_t err) {
+    printf("%-46s -> %s\n", what, err == cudaSuccess ? "OK" : cudaGetErrorString(err));
+}
+
+__global__ void write_one(int *p) { p[0] = 1; }
+
+int main() {
+    int *d_ok = nullptr;
+
+    // A normal, successful call -- this is the CUDA_CHECK pattern you will use in real code.
+    CUDA_CHECK(cudaMalloc(&d_ok, 4 * 1024 * 1024));
+    printf("%-46s -> OK\n", "cudaMalloc 4 MB (CUDA_CHECK)");
+
+    // A valid launch: nothing wrong, both checks say OK.
+    write_one<<<1, 1>>>(d_ok);
+    report("valid launch, cudaGetLastError", cudaGetLastError());
+    report("valid launch, cudaDeviceSynchronize", cudaDeviceSynchronize());
+```
+
+---
+
+## Example 5 · Full code (2/2)
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+
+    // 1. Invalid launch configuration: 2048 threads per block is above the 1024 limit.
+    //    The launch statement itself returns nothing; the error is waiting in cudaGetLastError.
+    write_one<<<1, 2048>>>(d_ok);
+    report("bad launch (2048 threads/block)", cudaGetLastError());
+
+    // 2. Allocation failure: ask for 1 TB. The error is in the return value.
+    int *d_huge = nullptr;
+    report("cudaMalloc 1 TB", cudaMalloc(&d_huge, 1ULL << 40));
+    cudaGetLastError();               // clear the error we just handled, so it is not reported twice
+
+    // 3. A crash inside the kernel: thread writes through a null pointer.
+    //    The launch is accepted, the crash happens later, on the GPU.
+    write_one<<<1, 1>>>(nullptr);
+    report("null-pointer launch, cudaGetLastError", cudaGetLastError());
+    report("null-pointer launch, cudaDeviceSynchronize", cudaDeviceSynchronize());
+
+    // After an "illegal memory access" the CUDA context is broken ("sticky" error):
+    // every later CUDA call fails too. The only fix is to end the process.
+    report("cudaMalloc afterwards", cudaMalloc(&d_huge, 1024));
+    return 0;
+}
+```
+
+---
+
+## Example 5 · Expected output
+
+```text
+cudaMalloc 4 MB (CUDA_CHECK)                   -> OK
+valid launch, cudaGetLastError                 -> OK
+valid launch, cudaDeviceSynchronize            -> OK
+bad launch (2048 threads/block)                -> invalid configuration argument
+cudaMalloc 1 TB                                -> out of memory
+null-pointer launch, cudaGetLastError          -> OK
+null-pointer launch, cudaDeviceSynchronize     -> an illegal memory access was encountered
+cudaMalloc afterwards                          -> an illegal memory access was encountered
+```
+
+- Line 6 is the lesson: the launch **looked fine**; the crash only appears on line 7.
+- Line 8: an "illegal memory access" is **sticky**. The context is broken, every later call fails.
+- Exact wording of the messages can differ slightly between CUDA versions.
+
+> Use `compute-sanitizer ./program` (ships with the CUDA toolkit) to find *which* thread read or wrote out of bounds.
+
+---
+
+## Example 6 · Problem: a 5 × 7 matrix
+
+**Problem.** Fill a matrix with `out[row][col] = 10 * row + col` using **one thread per element**.
+
+- A matrix lives in memory as **one flat array**, row after row (*row-major*).
+  Element `(row, col)` is at position **`row * n_cols + col`**.
+- 5 × 7 = 35 elements. Blocks of `4 × 4 = 16` threads. How many blocks do we need *in each direction*?
+
+```text
+ flat position:   0  1  2  3  4  5  6 | 7  8  9 10 11 12 13 | 14 …
+ matrix row:     └───── row 0 ────────┘ └───── row 1 ───────┘ └ row 2 …
+ (3, 6) → 3 * 7 + 6 = 27
+```
+
+> 1D launch → one index `i`. 2D launch → **two** indices: `col` from the **x** direction, `row` from **y**.
+
+---
+
+## Example 6 · Step by step (1/2): the launch
+
+`dim3 threads(4, 4)` → `blockDim.x = 4` (columns), `blockDim.y = 4` (rows).
+
+| Direction | size | `ceil(size / 4)` | blocks |
+|---|:-:|:-:|:-:|
+| x (columns) | 7 | `(7 + 3) / 4 = 2` | `blocks.x = 2` |
+| y (rows) | 5 | `(5 + 3) / 4 = 2` | `blocks.y = 2` |
+
+Launched threads: `(2 * 4) × (2 * 4) = 8 × 8 = 64`. Matrix has 35 elements → **29 idle threads**.
+
+```text
+                  cols 0–3        cols 4–7   ( col 7 does not exist )
+rows 0–3        block (0,0)      block (1,0)
+rows 4–7        block (0,1)      block (1,1)   ( rows 5–7 do not exist )
+```
+
+Formulas (the 1D formula, twice):
+
+```cpp
+col = blockIdx.x * blockDim.x + threadIdx.x;      // x → columns
+row = blockIdx.y * blockDim.y + threadIdx.y;      // y → rows
+```
+
+---
+
+## Example 6 · Step by step (2/2): follow six threads
+
+<style scoped>table { font-size: 17px; } li { font-size: 22px; }</style>
+
+| `blockIdx` (x,y) | `threadIdx` (x,y) | `col = bx*4 + tx` | `row = by*4 + ty` | In bounds? | flat `row*7 + col` | value `10*row + col` |
+|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| (0,0) | (0,0) | 0 | 0 | ✓ | 0 | 0 |
+| (1,0) | (2,3) | `4+2 = 6` | `0+3 = 3` | ✓ | `3*7+6 = 27` | **36** |
+| (0,1) | (1,0) | 1 | `4+0 = 4` | ✓ | `4*7+1 = 29` | **41** |
+| (1,1) | (2,0) | `4+2 = 6` | 4 | ✓ | `4*7+6 = 34` | **46** |
+| (1,1) | (3,0) | `4+3 = 7` | 4 | ✗ `col ≥ 7` | n/a | idle |
+| (1,1) | (0,1) | 4 | `4+1 = 5` | ✗ `row ≥ 5` | n/a | idle |
+
+- **Both** conditions are needed: `row < n_rows && col < n_cols`.
+- **Why x = columns?** Consecutive `threadIdx.x` then touch **consecutive memory** (`col`, `col+1`, …).
+  That is the fast pattern on a GPU (Week 9: coalescing).
+
+---
+
+## Example 6 · Full code (1/2)
+
+> 📁 `week08/cuda_c/06_matrix_2d.cu`
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+#include <cstdio>
+#include <cstdlib>
+
+#define CUDA_CHECK(call) do { cudaError_t e_ = (call); if (e_ != cudaSuccess) {            \
+    fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    exit(EXIT_FAILURE); } } while (0)
+
+__global__ void fill_matrix(int *out, int n_rows, int n_cols) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;   // x -> columns
+    int row = blockIdx.y * blockDim.y + threadIdx.y;   // y -> rows
+
+    if (row < n_rows && col < n_cols) {                // check BOTH dimensions
+        out[row * n_cols + col] = 10 * row + col;      // flat row-major position
+    }
+}
+```
+
+---
+
+## Example 6 · Full code (2/2)
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+int main() {
+    const int n_rows = 5, n_cols = 7;
+    const size_t bytes = n_rows * n_cols * sizeof(int);
+
+    int *d_out;
+    CUDA_CHECK(cudaMalloc(&d_out, bytes));
+    CUDA_CHECK(cudaMemset(d_out, 0xFF, bytes));        // fill with -1 so untouched cells would show
+
+    dim3 threads(4, 4);                                // (x, y) = 4 columns x 4 rows = 16 threads
+    dim3 blocks((n_cols + threads.x - 1) / threads.x,  // ceil(7 / 4) = 2 blocks across
+                (n_rows + threads.y - 1) / threads.y); // ceil(5 / 4) = 2 blocks down
+    printf("grid = (%d, %d) blocks, block = (%d, %d) threads -> %d x %d = %d threads, %d do work\n",
+           blocks.x, blocks.y, threads.x, threads.y,
+           blocks.x * threads.x, blocks.y * threads.y,
+           blocks.x * threads.x * blocks.y * threads.y, n_rows * n_cols);
+
+    fill_matrix<<<blocks, threads>>>(d_out, n_rows, n_cols);
+    CUDA_CHECK(cudaGetLastError());
+
+    int h_out[n_rows * n_cols];
+    CUDA_CHECK(cudaMemcpy(h_out, d_out, bytes, cudaMemcpyDeviceToHost));
+
+    for (int r = 0; r < n_rows; r++) {
+        for (int c = 0; c < n_cols; c++) printf("%3d", h_out[r * n_cols + c]);
+        printf("\n");
+    }
+
+    CUDA_CHECK(cudaFree(d_out));
+    return 0;
+}
+```
+
+---
+
+## Example 6 · Expected output
+
+```text
+grid = (2, 2) blocks, block = (4, 4) threads -> 8 x 8 = 64 threads, 35 do work
+  0  1  2  3  4  5  6
+ 10 11 12 13 14 15 16
+ 20 21 22 23 24 25 26
+ 30 31 32 33 34 35 36
+ 40 41 42 43 44 45 46
+```
+
+- Row 3, column 6 is **36**, row 4, column 1 is **41**: exactly the threads we traced.
+- No `-1` appears: every one of the 35 cells was written, none of the 29 idle threads wrote.
+
+> `cuda.grid(2)` in Numba returns `(x, y)` = `(col, row)`. It does **not** return `(row, col)`.
+> **Try it:** swap the roles (`row` from x, `col` from y) and watch what breaks.
+
+---
+
+## Example 7 · Problem: one grid, any N
+
+**Problem.** So far the launch size depended on `N` (`blocks = ceil(N / threads)`).
+Can we launch a **fixed** number of threads and still process **any** array length?
+
+Idea: each thread handles **several** elements, jumping ahead by the **total number of threads** each time.
+
+```text
+N = 20 elements, 2 blocks x 4 threads = 8 threads  →  stride = 8
+
+element :   0  1  2  3  4  5  6  7 |  8  9 10 11 12 13 14 15 | 16 17 18 19
+thread  :   0  1  2  3  4  5  6  7 |  0  1  2  3  4  5  6  7 |  0  1  2  3
+             first lap                 second lap                third lap
+```
+
+> Part A shows **who handles which element**. Part B runs SAXPY (`y = a*x + y`),
+> a classic AI building block, with the **same** launch for three very different `N`.
+
+---
+
+## Example 7 · Step by step
+
+```cpp
+int first  = blockIdx.x * blockDim.x + threadIdx.x;   // start at my global index
+int stride = blockDim.x * gridDim.x;                  // jump by the total thread count
+for (int i = first; i < n; i += stride) { ... }       // the bound check is the loop test
+```
+
+Here `stride = 4 * 2 = 8`. Trace **thread 3** (`first = 3`) with `n = 20`:
+
+| lap | `i` | `i < 20` ? | work |
+|:-:|:-:|:-:|---|
+| 1 | 3 | ✓ | element 3 |
+| 2 | `3 + 8 = 11` | ✓ | element 11 |
+| 3 | `11 + 8 = 19` | ✓ | element 19 |
+| 4 | `19 + 8 = 27` | ✗ | loop ends |
+
+Threads 0–3 handle **3** elements each, threads 4–7 handle **2**: `4*3 + 4*2 = 20` ✓
+
+- **One kernel covers every `N`**; the loop test `i < n` *is* the bounds check.
+- Neighbouring threads still touch neighbouring addresses in every lap.
+- Honest note: for simple kernels one-thread-per-element is just as fast; grid-stride suits reusable kernels.
+
+<style scoped>table { font-size: 18px; } pre { font-size: 15px; }</style>
+
+---
+
+## Example 7 · Full code (1/3)
+
+> 📁 `week08/cuda_c/07_grid_stride.cu`
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+#include <cstdio>
+#include <cstdlib>
+
+#define CUDA_CHECK(call) do { cudaError_t e_ = (call); if (e_ != cudaSuccess) {            \
+    fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(e_)); \
+    exit(EXIT_FAILURE); } } while (0)
+
+// Part A: record which thread processed element i
+__global__ void who_did_it(int *owner, int n) {
+    int first  = blockIdx.x * blockDim.x + threadIdx.x;   // my first element = my global id
+    int stride = blockDim.x * gridDim.x;                  // total number of threads launched
+    for (int i = first; i < n; i += stride) {
+        owner[i] = first;
+    }
+}
+
+// Part B: y = a * x + y, grid-stride version
+__global__ void saxpy(float a, const float *x, float *y, int n) {
+    int stride = blockDim.x * gridDim.x;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride) {
+        y[i] = a * x[i] + y[i];
+    }
+}
+```
+
+---
+
+## Example 7 · Full code (2/3): Part A
+
+<style scoped>pre { font-size: 14px; }</style>
+
+```cpp
+int main() {
+    // ---- Part A --------------------------------------------------------------
+    const int n = 20;
+    int *d_owner, h_owner[n];
+    CUDA_CHECK(cudaMalloc(&d_owner, n * sizeof(int)));
+    who_did_it<<<2, 4>>>(d_owner, n);                     // 2 blocks x 4 threads = 8 threads
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaMemcpy(h_owner, d_owner, n * sizeof(int), cudaMemcpyDeviceToHost));
+
+    printf("Part A: N = %d, 8 threads, stride = 8\n", n);
+    printf("element:");
+    for (int i = 0; i < n; i++) printf(" %2d", i);
+    printf("\nthread :");
+    for (int i = 0; i < n; i++) printf(" %2d", h_owner[i]);
+    printf("\n");
+    CUDA_CHECK(cudaFree(d_owner));
+```
+
+---
+
+## Example 7 · Full code (3/3): Part B
+
+<style scoped>pre { font-size: 13px; }</style>
+
+```cpp
+    // ---- Part B --------------------------------------------------------------
+    printf("\nPart B: saxpy, always 32 blocks x 256 threads = 8192 threads\n");
+    int sizes[] = {1000, 1 << 20, 5000000};
+    for (int k = 0; k < 3; k++) {
+        int N = sizes[k];
+        size_t bytes = N * sizeof(float);
+        float *h_y = (float *)malloc(bytes);
+        float *d_x, *d_y;
+        CUDA_CHECK(cudaMalloc(&d_x, bytes));
+        CUDA_CHECK(cudaMalloc(&d_y, bytes));
+
+        // x = 1 everywhere, y = 2 everywhere  ->  y = 2*1 + 2 = 4 everywhere
+        float *h_x = (float *)malloc(bytes);
+        for (int i = 0; i < N; i++) { h_x[i] = 1.0f; h_y[i] = 2.0f; }
+        CUDA_CHECK(cudaMemcpy(d_x, h_x, bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y, h_y, bytes, cudaMemcpyHostToDevice));
+
+        saxpy<<<32, 256>>>(2.0f, d_x, d_y, N);            // same launch for every N
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaMemcpy(h_y, d_y, bytes, cudaMemcpyDeviceToHost));
+
+        int wrong = 0;
+        for (int i = 0; i < N; i++) if (h_y[i] != 4.0f) wrong++;
+        printf("N = %8d: elements per thread ~ %5.1f, wrong elements = %d\n",
+               N, (double)N / (32 * 256), wrong);
+
+        CUDA_CHECK(cudaFree(d_x)); CUDA_CHECK(cudaFree(d_y));
+        free(h_x); free(h_y);
+    }
+    return 0;
+}
+```
+
+---
+
+## Example 7 · Expected output
+
+```text
+Part A: N = 20, 8 threads, stride = 8
+element:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+thread :  0  1  2  3  4  5  6  7  0  1  2  3  4  5  6  7  0  1  2  3
+
+Part B: saxpy, always 32 blocks x 256 threads = 8192 threads
+N =     1000: elements per thread ~   0.1, wrong elements = 0
+N =  1048576: elements per thread ~ 128.0, wrong elements = 0
+N =  5000000: elements per thread ~ 610.4, wrong elements = 0
+```
+
+- Part A matches the picture: element 11 belongs to thread 3.
+- Part B: **one launch configuration**, three array sizes, zero wrong results.
+
+> Compare with Example 4: there the **grid grew with N**. Here the **loop grows with N**.
+
+---
+
+## Example summary: the seven recipes
+
+| Need | Recipe |
+|---|---|
+| My global 1D index | `i = blockIdx.x * blockDim.x + threadIdx.x` |
+| Enough blocks | `blocks = (N + threads - 1) / threads` |
+| Don't touch what isn't mine | `if (i < n)` |
+| Move data | `cudaMalloc` → `cudaMemcpy` (H→D) → kernel → `cudaMemcpy` (D→H) → `cudaFree` |
+| Catch errors | `CUDA_CHECK(call)`; `CUDA_CHECK(cudaGetLastError())` after each launch |
+| 2D index | `col = blockIdx.x*blockDim.x + threadIdx.x`, `row = blockIdx.y*blockDim.y + threadIdx.y`, flat `row*n_cols + col` |
+| Any `N`, fixed grid | `for (i = first; i < n; i += blockDim.x * gridDim.x)` |
+
+> Next: the same recipes in **Python** (Numba CUDA). Only the spelling changes.
+
+---
+
+<!-- _class: lead -->
+
+# Part IV
 # Numba CUDA: Your First Kernel
 
 ---
@@ -578,6 +1677,27 @@ def vector_add(a, b, c):
 
 ---
 
+## Part III in Numba: Same Examples, New Spelling
+
+| CUDA C/C++ (Part III) | Numba CUDA |
+|---|---|
+| `__global__ void k(...)` | `@cuda.jit` `def k(...):` |
+| `blockIdx.x * blockDim.x + threadIdx.x` | `cuda.grid(1)` (or the full formula) |
+| `blockDim.x * gridDim.x` (stride) | `cuda.gridsize(1)` |
+| `cudaMalloc` + `cudaMemcpy` (host → device) | `cuda.to_device(a_np)` |
+| `cudaMalloc` only (output array) | `cuda.device_array(n, dtype=...)` |
+| `cudaMemcpy` (device → host) | `d_arr.copy_to_host()` |
+| `cudaFree` | automatic (freed when no longer referenced) |
+| `dim3 threads(4, 4)` · `k<<<blocks, threads>>>(args)` | `threads = (4, 4)` · `k[blocks, threads](args)` |
+| `CUDA_CHECK(...)`, `cudaGetLastError()` | a failed CUDA call raises a Python exception (`CudaAPIError`) |
+| `cudaDeviceSynchronize()` | `cuda.synchronize()` |
+
+> 📁 `week08/06_indexing_numba.py` re-runs Examples 1, 2, 3, 6, 7. Numba, like C, does **not** bounds-check.
+
+<style scoped>table { font-size: 16px; } blockquote { margin-top: 6px; }</style>
+
+---
+
 ## Launching a Kernel
 
 ```python
@@ -607,7 +1727,7 @@ result = c.copy_to_host()
 
 ## Full Working Example: Vector Addition
 
-> 📁 `class-examples/week08/01_vector_add.py`
+> 📁 `week08/01_vector_add.py`
 
 ```python
 import numpy as np
@@ -702,7 +1822,7 @@ def vector_add(a, b, c):
 
 <!-- _class: lead -->
 
-# Part IV
+# Part V
 # Memory Transfers and Device Arrays
 
 ---
@@ -824,12 +1944,12 @@ result = c_d.copy_to_host()            # safe to read
 
 <!-- _class: lead -->
 
-# Part V
+# Part VI
 # AI Examples: From ReLU to Attention
 
 ---
 
-## Example 1: Element-wise ReLU
+## AI Kernel A: Element-wise ReLU
 
 ```python
 @cuda.jit
@@ -850,7 +1970,7 @@ out_cupy = cp.maximum(x_gpu, 0)  # same operation using a library kernel
 
 ---
 
-## Example 2: Fused ReLU + Bias
+## AI Kernel B: Fused ReLU + Bias
 
 ```python
 @cuda.jit
@@ -872,7 +1992,7 @@ Fused:   no full-size temporary; one launch writes the final output
 
 ---
 
-## Example 3: Row-wise Softmax Needs Cooperation
+## AI Kernel C: Row-wise Softmax Needs Cooperation
 
 ```text
 For each row r:
@@ -893,7 +2013,7 @@ A natural mapping is **one block per row, one thread per column**, but:
 
 ---
 
-## Example 4: Attention Scores (The AI Workload)
+## AI Kernel D: Attention Scores (The AI Workload)
 
 ```python
 @cuda.jit
@@ -937,7 +2057,7 @@ attention_scores[blocks, threads](Q, K, scores)
 
 <!-- _class: lead -->
 
-# Part VI
+# Part VII
 # Performance: When Your Kernel Wins (and Loses)
 
 ---
@@ -1021,13 +2141,13 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 > Use CUDA events for device-side timing. Warm up the JIT, repeat runs,
 > report a mean or median, and inspect variability.
 
-<!-- _footer: "Example: class-examples/week08/05_benchmark_kernels.py" -->
+<!-- _footer: "Example: week08/05_benchmark_kernels.py" -->
 
 ---
 
 <!-- _class: lead -->
 
-# Part VII
+# Part VIII
 # Connection to the Course + Lab
 
 ---
@@ -1070,31 +2190,35 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 2. **Indexing:** `i = cuda.grid(1)` in 1D; `(col, row) = cuda.grid(2)` here.
    Always bounds-check when the launch is rounded up.
 
-3. **Launch:** `kernel[blocks, threads](args)`; launched blocks × threads ≥ `N`.
+3. **Launch:** `kernel[blocks, threads](args)` (C++: `kernel<<<blocks, threads>>>(args)`);
+   `blocks = ceil(N / threads)` so that launched threads ≥ `N`.
 
 4. **Scheduling is not a guarantee.** Blocks run in any order.
    `cuda.syncthreads()` synchronises only within one block.
+
+5. **Check errors.** In CUDA C/C++ wrap every call in `CUDA_CHECK` and call
+   `cudaGetLastError()` after each launch; kernel crashes surface at the *next* synchronising call.
 
 ---
 
 ## Key Takeaways: Data and Performance
 
-5. **Memory:** upload once, reuse device data, download once.
+6. **Memory:** upload once, reuse device data, download once.
    Judge transfers end-to-end; avoid accidental host-array copies.
 
-6. **Synchronize** before timing or reading results; use CUDA events for kernel time.
+7. **Synchronize** before timing or reading results; use CUDA events for kernel time.
 
-7. **Libraries first.** Write kernels for custom or fused operations.
+8. **Libraries first.** Write kernels for custom or fused operations.
    Do not expect a naïve kernel to beat cuBLAS.
 
-8. **Fusion can reduce memory traffic** and intermediate allocations.
+9. **Fusion can reduce memory traffic** and intermediate allocations.
    Verify correctness, then measure; do not assume a fixed speedup.
 
 ---
 
 ## Lab: Four Exercises on Colab
 
-> 📁 `class-examples/week08/lab_week08_kernels.ipynb`
+> 📁 `week08/lab_week08_kernels.ipynb`
 
 | # | Exercise | What you learn |
 |---|----------|---------------|
@@ -1105,6 +2229,8 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 **Deliverable:** Results table + one sentence:
 "My kernel beats CuPy when... and loses when..."
+
+**Warm-up:** `week08/lab_week08_cuda_c.ipynb`: run the seven CUDA C programs, predict first, then "Try it".
 
 **Bonus:** Implement a 2D kernel for matrix transpose. Compare against `cp.transpose`.
 
@@ -1117,7 +2243,9 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
   from numba import cuda
   print(cuda.is_available())  # True
   ```
-- [ ] Run all 5 class-example scripts on Colab T4, record timings
+- [ ] Run the 5 Numba scripts and `06_indexing_numba.py` on Colab T4, record timings
+- [ ] Compile and run the seven `cuda_c/*.cu` programs on Colab (`nvcc`); compare with the expected-output slides
+  (Example 1 line order and Example 4 Part B values depend on the GPU; Example 5 message wording on the CUDA version)
 - [ ] Prepare the Colab notebook with cells pre-written (students fill in kernels)
 - [ ] Test `cuda.event_elapsed_time` for timing (more reliable than perf_counter)
 - [ ] Have a CPU fallback ready in case Colab GPU quota is exhausted
@@ -1131,7 +2259,7 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 - [Numba CUDA project status](https://nvidia.github.io/numba-cuda/) · [Course repository](https://github.com/adaskin/hpc-for-ai-course)
 
 **Official figures used:** NVIDIA Programming Guide Figures 2, 3, 4, and 7.
-Local copies and full credits are bundled under `slides/img/` and in `08cuda-kernel.md`.
+Local copies are in `img/`; full credits are in `img/CREDITS.md`.
 
 ---
 
