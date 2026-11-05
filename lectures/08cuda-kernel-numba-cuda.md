@@ -105,24 +105,263 @@ Three reasons:
 
 | Part | Content | Time |
 |------|---------|:----:|
-| I | Why write kernels (motivation + recap) | 10 min |
-| II | General CUDA programming model + indexing | 25 min |
-| III | **Learning by example: seven CUDA C/C++ programs** | 40 min |
+| I | **Foundations: data-parallel thinking, vocabulary** | 20 min |
+| II | Why write kernels (motivation + recap) | 10 min |
+| III | **CUDA programming model + seven worked CUDA C/C++ examples** | 65 min |
 | IV | Numba CUDA: your first kernel | 15 min |
 | V | Memory transfers and device arrays | 10 min |
 | *Break* | | 10 min |
 | VI | AI examples: ReLU, softmax, attention scores | 20 min |
 | VII | Performance: when your kernel wins (and loses) | 10 min |
 | VIII | Connection to the course + lab | 10 min |
-| **Total** | | ~150 min |
+| **Total** | | ~170 min |
 
-> Short on time? Do Examples 1–5 live; Examples 6–7 can move to the lab or be self-study.
+> Short on time? Assign Part I as pre-reading, do Examples 1–5 live, and move Examples 6–7 to the lab.
 
 ---
 
 <!-- _class: lead -->
 
 # Part I
+# Foundations: Thinking in Data-Parallel Terms
+
+---
+
+## Where GPUs Come From: Pixels Before Tensors
+
+A 1080p frame has about **2 million pixels**, redrawn 60 times a second.
+
+- Each pixel's colour comes from the **same small program** (a *shader*) run on its own inputs.
+- No pixel needs another pixel's answer → all can be computed **at the same time**.
+- So the hardware has thousands of simple arithmetic units that switch to other work while waiting for memory.
+
+| Year | Step |
+|:-:|---|
+| 2001 | Programmable shaders (GeForce 3), after fixed-function cards |
+| 2007 | **CUDA**: the same hardware opened to general programs |
+| 2012 | AlexNet trains on two GPUs and wins ImageNet |
+| 2017+ | Tensor cores: hardware for matrix multiply (Volta) |
+
+> A neural-network layer has the same shape: **one small computation on millions of independent numbers.**
+
+<style scoped>table { font-size: 18px; }</style>
+
+
+---
+
+## CPU and GPU in One Table (Recap of Week 6)
+
+| | CPU | GPU |
+|---|---|---|
+| **Goal** | Finish **one** task as fast as possible (low latency) | Finish a **huge batch** of tasks (high throughput) |
+| **Cores** | A few dozen, large and clever | Thousands of simple lanes, grouped into SMs |
+| **Hides memory delay with** | Big caches, prediction | Switching to another ready group of threads |
+| **Happy with** | Branchy, serial code | The same operation on huge arrays |
+| **Colab T4** | n/a | 40 SMs, 2,560 CUDA cores |
+
+> The GPU is not "a faster CPU". It is a machine that is fast **only if you give it
+> a very large amount of independent work.** Today is about how to describe that work.
+
+---
+
+## Dependencies Decide What Can Run in Parallel
+
+```text
+x = a + b            with a = 2, b = 3:      x = 5
+y = b * 7                                    y = 21
+z = (x - y) * (x + y)                        z = (5 - 21) * (5 + 21) = -416
+```
+
+```text
+ a, b ──▶ x = a + b ──┐
+   │                  ├──▶ z = (x - y) * (x + y)
+   └────▶ y = b * 7 ──┘
+```
+
+- `x` and `y` need only `a` and `b`, not each other → they **can run at the same time**.
+- `z` needs both → it **must wait**. Every arrow is a dependency.
+- **No arrow between two operations ⇒ they may run in parallel.**
+
+> `c[i] = a[i] + b[i]` for `i = 0 … N-1` is `N` operations with **no arrows between them**:
+> the ideal GPU workload.
+
+---
+
+## Data-Parallel Thinking: Describe the Data, Not the Workers
+
+Instead of "what does each worker do?", ask: **what happens to the whole sequence?**
+
+| Primitive | Meaning | NumPy spelling | AI example |
+|---|---|---|---|
+| **map** | Apply the same function to every element | `np.maximum(x, 0)` | ReLU, bias add, GELU |
+| **reduce** | Combine all elements into one value | `x.sum()`, `x.max()` | Loss, row max and row sum in softmax |
+| **scan** | Running totals | `np.cumsum(x)` | Cumulative sums, stream compaction |
+| **gather / scatter** | Read or write at computed positions | `x[idx]` | Embedding lookup |
+
+- You already used these in Week 2 as "vectorisation". Libraries run them in parallel for you.
+- **Today:** you write the GPU kernel behind a *map*. **Week 9:** reductions.
+
+---
+
+## Map: The Pattern Behind Today's Kernels
+
+```text
+input   :  -2    5   -1    3    0   -7    4    1
+              f(x) = max(x, 0), applied to every element independently
+output  :   0    5    0    3    0    0    4    1
+```
+
+- `f` has no side effects, and no element needs another element's result.
+- So elements can be processed **in any order, by any number of workers**, and the answer never changes.
+- A GPU uses that freedom: **one thread per element.**
+
+> Vector add, ReLU, bias add, SiLU: all maps. Examples 1–4 and 6–7 of Part III are maps.
+> A kernel is just the body of the map; the launch supplies the elements.
+
+---
+
+## Reduce: Many Inputs, One Output
+
+```text
+Sequential: 7 additions, one after another        Tree: 7 additions, only 3 rounds
+
+((((((3+8)+4)+6)+3)+9)+2)+8 = 43                  3   8   4   6   3   9   2   8
+                                                   └11┘   └10┘   └12┘   └10┘     round 1
+                                                      └──21──┘   └──22──┘       round 2
+                                                           └───── 43 ─────┘     round 3
+```
+
+- Same total work (`N - 1` additions), but the tree's **longest chain** is `log2 N` steps.
+- It requires an **associative** operator: `(a + b) + c = a + (b + c)`.
+  Floating-point sums can change in the last digits when the order changes.
+- Softmax (max, sum), layer norm and loss are all reductions. Threads must **cooperate**: Week 9.
+
+---
+
+## Scan (Prefix Sum): A Preview
+
+```text
+input      :  1   2   3   4   5   6   7   8
+inclusive  :  1   3   6  10  15  21  28  36     out[i] = in[0] + ... + in[i]
+exclusive  :  0   1   3   6  10  15  21  28     out[i] = in[0] + ... + in[i-1]
+```
+
+Looks sequential, since each output uses the previous one, yet it can be done in about `log2 N` rounds.
+
+**Why it matters: stream compaction.** Keep only the positive numbers of `[3, -1, 4, -1, 5]`:
+
+```text
+flags      :  1   0   1   0   1
+exclusive scan :  0   1   1   2   2     ← the output position of each kept element
+result     :  [3, 4, 5]                 (3 → slot 0, 4 → slot 1, 5 → slot 2)
+```
+
+> Optional preview: you do not need scan for today's kernels.
+
+---
+
+## Work and Span: Why GPUs Need Lots of Parallelism
+
+- **Work** = total number of operations. **Span** = the longest chain of dependent operations.
+- Ideal running time with `P` workers is roughly `max(work / P, span)`.
+
+| Pattern | Work | Span |
+|---|:-:|:-:|
+| map over `N` elements | `N` | 1 |
+| reduce `N` elements (tree) | `N - 1` | `log2 N` |
+| reduce `N` elements (one thread) | `N - 1` | `N - 1` |
+
+**The GPU's appetite:** a Colab T4 has 40 SMs, each able to hold up to 1,024 resident threads, so about **40,960 threads in flight**, and it wants several times more waiting in line to hide memory delay.
+
+> A kernel over 1,000 elements leaves most of the GPU idle, and launch cost dominates.
+> This is the same lesson as Week 6's crossover: **enough work per launch.**
+
+---
+
+## From Map to CUDA: Same Idea, Explicit Threads
+
+```python
+# CPU, one worker walks the sequence
+for i in range(N):
+    c[i] = a[i] + b[i]
+```
+
+```text
+# GPU, N tiny workers; each one runs the SAME code on its own i
+kernel(a, b, c):
+    i = my own index
+    c[i] = a[i] + b[i]
+```
+
+- NumPy's `c = a + b` hides the loop. In CUDA **you write the body and the launch supplies the indices.**
+- Unlike `map(f, sequence)`, the **number of threads is explicit in the launch**, not implied by the data size.
+  So the launch can be larger than the data: that is why the **bounds check** exists (Example 3).
+- The CPU program stays serial: it prepares data, **launches** work, then waits.
+
+---
+
+## CUDA Is SPMD: Same Program, Multiple Data
+
+**SPMD** = *single program, multiple data*: one program text, many running instances, each knowing **its own ID**.
+
+| Idea | Course connection |
+|---|---|
+| Many instances of one function | Week 3: `Pool(8)` on the CPU, here thousands in hardware |
+| Each instance finds its data from its ID | `i = blockIdx.x * blockDim.x + threadIdx.x` |
+| Instances grouped, executed 32 at a time | Week 6: warps and SIMT |
+
+- A **CUDA thread** is a *logical* thread of control. Launching a million does **not** create a million operating-system threads.
+- The hardware schedules **blocks** onto SMs as resources free up, in no guaranteed order.
+
+> Part III turns these ideas into code, one small program at a time.
+
+---
+
+## CUDA Vocabulary on One Page
+
+| Term | One-line meaning |
+|---|---|
+| **Host** / **device** | The CPU (and its memory) / the GPU (and its memory) |
+| **Kernel** | A function that runs on the device, launched from the host |
+| **Launch** | The host command that starts a grid of threads running a kernel |
+| **Thread** | One instance of the kernel, with its own `threadIdx` and registers |
+| **Block** | A group of threads that can cooperate; runs on one SM |
+| **Grid** | All blocks of one launch |
+| **Warp** | 32 threads executed together by an SM |
+| **SM** | Streaming multiprocessor: the unit that runs blocks |
+| **Global memory** | GPU DRAM, visible to every thread |
+| **Shared memory** | Fast on-chip memory shared by one block (Week 9) |
+
+> Each term returns with code later. Come back here if a word feels fuzzy.
+
+<style scoped>table { font-size: 18px; }</style>
+
+---
+
+## Quick Check (no slides open)
+
+1. Which of these are **maps**? (a) ReLU on a tensor (b) the sum of a tensor (c) adding a bias (d) a running total.
+2. `x = a + b; y = c * d; z = x + y`. Which two statements can run at the same time?
+3. A tree reduction sums 1,024 numbers. How many rounds does it need?
+4. You launch a kernel over only 100 elements. Why is the GPU a poor fit?
+5. Why is "one thread per element" **not** the same as "launch exactly `N` threads"? *(hint: threads come in blocks)*
+
+---
+
+## Quick Check: Answers
+
+1. **(a) and (c).** The sum is a reduce, the running total is a scan.
+2. **`x` and `y`**: they share no inputs. `z` waits for both.
+3. **10 rounds**, since `2^10 = 1024`. (A single thread would need 1,023 dependent additions.)
+4. Too little parallel work: most SMs stay idle, and launch and transfer overhead dominate.
+5. Threads are launched in whole **blocks**, so the launch can contain more threads than elements.
+   The extra threads must be stopped by a **bounds check**: Part III, Examples 2 and 3.
+
+---
+
+<!-- _class: lead -->
+
+# Part II
 # Why Write Kernels?
 
 ---
@@ -209,8 +448,8 @@ Benefits:
 
 <!-- _class: lead -->
 
-# Part II
-# The General CUDA Programming Model
+# Part III
+# The CUDA Programming Model, with Worked Examples
 
 ---
 
@@ -246,7 +485,7 @@ Python / C++ starts the program
 
 ## A CUDA Program in Six Steps
 
-| Step | Where | CUDA C/C++ (Part III) | Numba CUDA (Part IV) |
+| Step | Where | CUDA C/C++ (Part III examples) | Numba CUDA (Part IV) |
 |:---:|---|---|---|
 | 1 | Host | `malloc`, fill `h_a`, choose `N` | Create NumPy inputs, choose `N` |
 | 2 | Host → device | `cudaMalloc` + `cudaMemcpy(..., HostToDevice)` | `cuda.to_device(a_np)` |
@@ -401,155 +640,10 @@ Rules:
 
 ---
 
-## Thread Indexing: The Core Formula
+## Concepts, Then Worked Examples
 
-```cpp
-int i = blockIdx.x * blockDim.x + threadIdx.x;                    // CUDA C/C++
-```
-
-```python
-i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x          # Numba CUDA (or: i = cuda.grid(1))
-```
-
-| Symbol | Meaning | Example |
-|--------|---------|---------|
-| `blockIdx.x` | Which block am I in? | Block 3 |
-| `blockDim.x` | How many threads per block? | 256 |
-| `threadIdx.x` | Which thread within my block? | Thread 42 |
-| **Global index** | `3 * 256 + 42 = 810` | Element 810 |
-
-> **Think of a hotel.** A block is a floor with `blockDim.x` rooms. Your room number is
-> *(floors below you × rooms per floor) + your place on your floor*: `3 * 256 + 42 = 810`.
-
-> Write what thread `i` does—not the host-side `for i in range(N)` loop.
-> Hardware schedules the launched threads in warps and waves.
-> **→ Part III, Examples 1 and 2:** the formula on 12 threads, every index worked out.
-
----
-
-## 2D Indexing: For Matrices
-
-Use **x for columns** and **y for rows** so consecutive x-threads read adjacent columns.
-
-```python
-col = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-row = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
-
-# Equivalent shortcut:
-# col, row = cuda.grid(2)
-
-if row < n_rows and col < n_cols:
-    out[row, col] = ...
-```
-
-In CUDA C/C++: same two lines without `cuda.`, and a flat array `out[row * n_cols + col]`.
-
-```python
-threads = (16, 16)  # (x=columns, y=rows), 256 threads
-blocks = ((n_cols + 15) // 16,
-          (n_rows + 15) // 16)
-kernel[blocks, threads](...)
-```
-
-> `cuda.grid(2)` returns `(x, y)`, **not automatically `(row, col)`**.
-> A 4096×4096 matrix → 256×256 blocks, 16.7M threads. **→ Part III, Example 6:** a 5 × 7 matrix by hand.
-
----
-
-## Bounds Checking: Don't Read Past the Array
-
-```python
-i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-if i < N:                    # ← CRITICAL
-    c[i] = a[i] + b[i]
-```
-
-Why? Grid size is rounded up:
-- N = 1,000,000, blockDim = 256
-- Grid = ⌈1,000,000 / 256⌉ = 3,907 blocks
-- Total threads launched = 3,907 × 256 = 1,000,192
-- **192 threads have no work.** Without the check → out-of-bounds access → crash or garbage.
-
-> Always include the bounds check. It's nearly free (one comparison per thread).
-> **→ Part III, Example 3:** watch the missing check overwrite memory.
-
----
-
-## Launch Configuration: Choosing Block and Grid Size
-
-| Parameter | Typical choice | Constraint |
-|-----------|---------------|------------|
-| `blockDim.x` (threads per block) | Start with 128 or 256 | Max 1024 threads/block; a multiple of 32 is a performance recommendation, not a syntax rule. |
-| Grid size | `⌈N / blockDim⌉` | Can be very large (millions) |
-
-```python
-threads_per_block = 256
-blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
-my_kernel[blocks_per_grid, threads_per_block](a, b, c, N)
-```
-
-```cpp
-int threads = 256;
-int blocks  = (N + threads - 1) / threads;       // integer ceil(N / threads)
-my_kernel<<<blocks, threads>>>(d_a, d_b, d_c, N);
-```
-
-> **Starting point, not a law:** try 128 or 256 for simple element-wise kernels,
-> then measure. Week 9 covers occupancy and tuning.
-> **→ Part III, Examples 4 and 5:** the formula for many `N`, hardware limits, and error checking.
-
----
-
-## Optional Pattern: The Grid-Stride Loop
-
-One thread per element is simple, but not the only valid mapping.
-
-```python
-i = cuda.grid(1)          # first element for this thread
-stride = cuda.gridsize(1) # total threads in the launch
-
-while i < c.size:
-    c[i] = a[i] + b[i]
-    i += stride
-```
-
-- Each thread handles several elements, `stride` positions apart.
-- A fixed-size grid can process any `N` without launching one thread per element.
-- Consecutive threads still access consecutive addresses in each iteration.
-
-> Use one-thread-per-element for today's first kernels; remember grid-stride
-> for larger or reusable kernels. Correctness still requires the `while i < N` check.
-> **→ Part III, Example 7:** which thread handles which element, with `N = 20` and 8 threads.
-
----
-
-## From Concepts to Code: Your Roadmap
-
-You now know the vocabulary. The next part makes it concrete.
-
-| Concept slide (Part II) | Worked example (Part III) |
-|---|---|
-| Thread indexing: the core formula | **1** Hello, threads · **2** Vector add, `N = 10` |
-| Bounds checking | **3** The missing bounds check |
-| Launch configuration | **4** Launch configuration · **5** Error checking |
-| 2D indexing | **6** A 5 × 7 matrix |
-| Grid-stride loop | **7** Grid-stride loop |
-| Host/device memory, six steps | **2** (the full workflow, line by line) |
-
-> Every example: **problem → step by step → full code → expected output.**
-
----
-
-<!-- _class: lead -->
-
-# Part III
-# Learning by Example: CUDA C/C++
-
----
-
-## How to read Part III
-
-Seven small programs. Each has the same four slides:
+From here on, each concept slide is followed by a **worked example** in CUDA C/C++.
+Every example has the same four slides:
 **Problem** → **Step by step** (worked numbers: do it on paper first) → **Full code** → **Expected output**.
 
 | # | Example | Concept it teaches |
@@ -602,6 +696,31 @@ On Colab (Runtime → Change runtime type → **T4 GPU**):
 - `nvcc` splits the file: host code goes to your C++ compiler, kernels to the GPU compiler.
 - Error `no kernel image is available`? Add `-arch=native` (or `-arch=sm_75` for a T4).
 - All seven programs are in 📁 `week08/cuda_c/`.
+
+---
+
+## Thread Indexing: The Core Formula
+
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;                    // CUDA C/C++
+```
+
+```python
+i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x          # Numba CUDA (or: i = cuda.grid(1))
+```
+
+| Symbol | Meaning | Example |
+|--------|---------|---------|
+| `blockIdx.x` | Which block am I in? | Block 3 |
+| `blockDim.x` | How many threads per block? | 256 |
+| `threadIdx.x` | Which thread within my block? | Thread 42 |
+| **Global index** | `3 * 256 + 42 = 810` | Element 810 |
+
+> **Think of a hotel.** A block is a floor with `blockDim.x` rooms. Your room number is
+> *(floors below you × rooms per floor) + your place on your floor*: `3 * 256 + 42 = 810`.
+
+> Write what thread `i` does—not the host-side `for i in range(N)` loop.
+> Hardware schedules the launched threads in warps and waves.
 
 ---
 
@@ -851,6 +970,24 @@ Check against the table: `c[9] = a[9] + b[9] = 9 + 90 = 99` ✓
 
 ---
 
+## Bounds Checking: Don't Read Past the Array
+
+```python
+i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+if i < N:                    # ← CRITICAL
+    c[i] = a[i] + b[i]
+```
+
+Why? Grid size is rounded up:
+- N = 1,000,000, blockDim = 256
+- Grid = ⌈1,000,000 / 256⌉ = 3,907 blocks
+- Total threads launched = 3,907 × 256 = 1,000,192
+- **192 threads have no work.** Without the check → out-of-bounds access → crash or garbage.
+
+> Always include the bounds check. It's nearly free (one comparison per thread).
+
+---
+
 ## Example 3 · Problem: what if I skip the bounds check?
 
 **Problem.** Fill `out[i] = i` for `n = 10` elements, launching `3 × 4 = 12` threads.
@@ -965,6 +1102,30 @@ unsafe (no check):        0  1  2  3  4  5  6  7  8  9 | 10 11
 
 ---
 
+## Launch Configuration: Choosing Block and Grid Size
+
+| Parameter | Typical choice | Constraint |
+|-----------|---------------|------------|
+| `blockDim.x` (threads per block) | Start with 128 or 256 | Max 1024 threads/block; a multiple of 32 is a performance recommendation, not a syntax rule. |
+| Grid size | `⌈N / blockDim⌉` | Can be very large (millions) |
+
+```python
+threads_per_block = 256
+blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
+my_kernel[blocks_per_grid, threads_per_block](a, b, c, N)
+```
+
+```cpp
+int threads = 256;
+int blocks  = (N + threads - 1) / threads;       // integer ceil(N / threads)
+my_kernel<<<blocks, threads>>>(d_a, d_b, d_c, N);
+```
+
+> **Starting point, not a law:** try 128 or 256 for simple element-wise kernels,
+> then measure. Week 9 covers occupancy and tuning.
+
+---
+
 ## Example 4 · Problem: how many blocks and threads?
 
 **Problem.** You have `N` elements. Choose `threads` per block and `blocks` so that
@@ -1007,8 +1168,9 @@ Questions this example answers:
 ## Example 4 · Full code (1/3)
 
 > 📁 `week08/cuda_c/04_launch_config.cu`
+> `CUDA_CHECK(call)` = "run the call, stop if it failed". Example 5 explains it.
 
-<style scoped>pre { font-size: 14px; }</style>
+<style scoped>pre { font-size: 13px; }</style>
 
 ```cpp
 #include <cstdio>
@@ -1274,6 +1436,35 @@ cudaMalloc afterwards                          -> an illegal memory access was e
 
 ---
 
+## 2D Indexing: For Matrices
+
+Use **x for columns** and **y for rows** so consecutive x-threads read adjacent columns.
+
+```python
+col = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+row = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+
+# Equivalent shortcut:
+# col, row = cuda.grid(2)
+
+if row < n_rows and col < n_cols:
+    out[row, col] = ...
+```
+
+In CUDA C/C++: same two lines without `cuda.`, and a flat array `out[row * n_cols + col]`.
+
+```python
+threads = (16, 16)  # (x=columns, y=rows), 256 threads
+blocks = ((n_cols + 15) // 16,
+          (n_rows + 15) // 16)
+kernel[blocks, threads](...)
+```
+
+> `cuda.grid(2)` returns `(x, y)`, **not automatically `(row, col)`**.
+> For a 4096×4096 matrix, this launch creates 256×256 blocks and 16.7M threads.
+
+---
+
 ## Example 6 · Problem: a 5 × 7 matrix
 
 **Problem.** Fill a matrix with `out[row][col] = 10 * row + col` using **one thread per element**.
@@ -1418,6 +1609,28 @@ grid = (2, 2) blocks, block = (4, 4) threads -> 8 x 8 = 64 threads, 35 do work
 
 > `cuda.grid(2)` in Numba returns `(x, y)` = `(col, row)`. It does **not** return `(row, col)`.
 > **Try it:** swap the roles (`row` from x, `col` from y) and watch what breaks.
+
+---
+
+## Optional Pattern: The Grid-Stride Loop
+
+One thread per element is simple, but not the only valid mapping.
+
+```python
+i = cuda.grid(1)          # first element for this thread
+stride = cuda.gridsize(1) # total threads in the launch
+
+while i < c.size:
+    c[i] = a[i] + b[i]
+    i += stride
+```
+
+- Each thread handles several elements, `stride` positions apart.
+- A fixed-size grid can process any `N` without launching one thread per element.
+- Consecutive threads still access consecutive addresses in each iteration.
+
+> Use one-thread-per-element for today's first kernels; remember grid-stride
+> for larger or reusable kernels. Correctness still requires the `while i < N` check.
 
 ---
 
@@ -1673,13 +1886,13 @@ def vector_add(a, b, c):
 | `cuda.grid(1)` | Global index in 1D (= `blockIdx.x * blockDim.x + threadIdx.x`) |
 | `cuda.grid(2)` | `(x, y)` in 2D; this lecture maps `x→col`, `y→row` |
 > `cuda.blockIdx`, `cuda.threadIdx`, `cuda.blockDim`, and `cuda.gridDim`
-> expose the lower-level geometry from Part II. The first launch triggers JIT compilation.
+> expose the lower-level geometry from Part III. The first launch triggers JIT compilation.
 
 ---
 
-## Part III in Numba: Same Examples, New Spelling
+## Part III Examples in Numba: New Spelling
 
-| CUDA C/C++ (Part III) | Numba CUDA |
+| CUDA C/C++ (Part III examples) | Numba CUDA |
 |---|---|
 | `__global__ void k(...)` | `@cuda.jit` `def k(...):` |
 | `blockIdx.x * blockDim.x + threadIdx.x` | `cuda.grid(1)` (or the full formula) |
@@ -2254,6 +2467,7 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 ## Official References
 
+- Foundations in Part I follow [Stanford CS149, Fall 2023](https://gfxcourses.stanford.edu/cs149/fall23): Lecture 7 (GPU Architecture & CUDA Programming) and Lecture 8 (Data-Parallel Thinking)
 - [NVIDIA CUDA Programming Guide — Programming Model](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
 - [Numba CUDA — Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html) · [Memory](https://nvidia.github.io/numba-cuda/user/memory.html) · [Installation](https://nvidia.github.io/numba-cuda/user/installation.html)
 - [Numba CUDA project status](https://nvidia.github.io/numba-cuda/) · [Course repository](https://github.com/adaskin/hpc-for-ai-course)
