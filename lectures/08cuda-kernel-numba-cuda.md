@@ -39,7 +39,7 @@ style: |
 # YZM 513 – High-Performance Programming for AI
 
 ### Week 8: Writing Your First CUDA Kernel
-### From CuPy to Numba CUDA
+### From CuPy to your own kernels: CUDA C/C++ and Numba CUDA
 
 **İstanbul Medeniyet Üniversitesi**
 AI Engineering M.Sc. – Fall 2026
@@ -50,23 +50,7 @@ Ammar Daşkın
 
 ---
 
-## Learning Objectives
-
-By the end of this lecture and lab, you can:
-
-1. Explain **host, device, kernel, launch, grid, block, thread, warp, and SM**.
-2. Describe how a kernel launch becomes blocks scheduled onto SMs.
-3. Calculate 1D and 2D launch geometry and global thread indices safely, by hand and in code.
-4. Write a complete CUDA C/C++ program: allocate, copy, launch, check errors, copy back, free.
-5. Move data between host and device and synchronize correctly.
-6. Write, verify, and benchmark basic Numba CUDA kernels.
-7. Decide when a custom kernel is justified—and when a library is better.
-
-> **Prerequisite:** Week 6's conceptual GPU architecture and CuPy array operations.
-
----
-
-## Welcome Back: Where We Are
+## Welcome Back: Where We Are in the Course
 
 **Before midterm (Weeks 1–6):**
 - Profile → vectorise → parallelise → distribute
@@ -80,7 +64,186 @@ By the end of this lecture and lab, you can:
 - Deploy efficiently (Week 13)
 
 > Week 6: you *used* the GPU through CuPy.
-> This week: you *program* the GPU directly.
+> This week: you *program* the GPU directly. We start with a short review of Weeks 1–6,
+> because almost every idea from those weeks comes back today.
+
+---
+
+## Learning Objectives
+
+By the end of this lecture and lab, you can:
+
+1. Connect today's kernels to the tools of Weeks 1–6: NumPy, Numba, worker pools, CuPy.
+2. Describe a computation in data-parallel terms (map, reduce, scan) and spot its dependencies.
+3. Explain **host, device, kernel, launch, grid, block, thread, warp, SM**, and how blocks reach SMs.
+4. Compute 1D and 2D thread indices and launch sizes by hand, and guard them with bounds checks.
+5. Write a complete CUDA C/C++ program: allocate, copy, launch, check errors, copy back, free.
+6. Write, verify and time the same kernels in Numba CUDA, moving data explicitly.
+7. Decide when a custom kernel is worth writing, and when a library is the better choice.
+
+> **Prerequisite:** Weeks 1–6. Part I reviews exactly the pieces we need.
+
+---
+
+## Today's Arc
+
+<style scoped>table { font-size: 17px; } th, td { padding: 4px 12px; } blockquote { font-size: 20px; }</style>
+
+| Part | Content | Time |
+|------|---------|:----:|
+| I | Review: Weeks 1–6 in one story | 10 min |
+| II | Why write your own kernels? | 10 min |
+| III | Foundations: thinking in data-parallel terms | 20 min |
+| IV | The CUDA programming model + Examples 1–3 | 35 min |
+| *Break* | | 10 min |
+| IV (cont.) | Examples 4–7: launch configuration, errors, 2D, grid-stride | 30 min |
+| V | The same kernels in Python: Numba CUDA and device memory | 25 min |
+| VI | AI kernels: ReLU, fusion, softmax, attention | 20 min |
+| VII | Performance: when your kernel wins (and loses) | 10 min |
+| VIII | Wrap-up and lab | 10 min |
+| **Total** | | ~180 min |
+
+> Short on time? Assign Part III as pre-reading and move Examples 6–7 to the lab (about 135 min).
+
+---
+
+<!-- _class: lead -->
+
+# Part I
+# Review: Weeks 1–6 in One Story
+
+*Six weeks in ten minutes: the ideas you will reuse today.*
+
+---
+
+## Six Weeks in One Table
+
+<style scoped>table { font-size: 18px; }</style>
+
+| Week | Topic | Key idea | Where it comes back today |
+|:-:|---|---|---|
+| 1 | Profiling, FLOP/s, Amdahl, memory wall | **Measure first**; the serial part limits speedup | Verify a kernel, then time it properly |
+| 2 | NumPy vectorisation, Numba `@njit` / `prange` | Move the loop **out of the interpreter** | A kernel *is* the loop body; `@cuda.jit` is Numba for the GPU |
+| 3 | Threads, processes, races, locks | Split → distribute → combine; shared writes need care | One thread per element; races on a shared output |
+| 4 | GIL, `concurrent.futures`, async, pools | A **pool** of workers takes tasks from a queue | The GPU's block scheduler is a pool built in hardware |
+| 5 | Dask / Ray, the four questions | Split, assign, move, wait; **granularity** | The same four questions, answered on the GPU |
+| 6 | GPU architecture, SIMT, CuPy | A **throughput** machine; transfers are expensive | Today you write the kernels CuPy launched for you |
+
+> One story: every week moved the same kind of loop to a **cheaper place to run**.
+
+---
+
+## One Loop, Six Ways: ReLU Through the Course
+
+<style scoped>pre { font-size: 15px; }</style>
+
+```python
+for i in range(n):                         # Week 1: pure Python, the interpreter runs the body n times
+    out[i] = max(x[i], 0.0)
+
+out = np.maximum(x, 0)                     # Week 2: NumPy, one compiled loop in C
+
+@njit(parallel=True)                       # Week 2: Numba, your loop compiled; prange splits it over cores
+def relu(x, out):
+    for i in prange(x.size):
+        out[i] = max(x[i], 0.0)
+
+parts = ex.map(relu_chunk, np.array_split(x, 8))   # Weeks 3–5: chunks handed to a pool of workers
+
+out_gpu = cp.maximum(x_gpu, 0)             # Week 6: CuPy, the GPU runs a kernel you did not write
+```
+
+```cpp
+__global__ void relu(const float *x, float *out, int n) {   // Today: you write the kernel
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = fmaxf(x[i], 0.0f);
+}
+```
+
+> Same computation every time. What changes is **who runs the loop**: the interpreter, C, CPU cores, worker processes, or thousands of GPU threads.
+
+---
+
+## Two Laws You Will Use Today
+
+**Amdahl's law (Week 1).** If a fraction `P` of the work is parallel and runs on `N` workers:
+
+$$S(N) = \frac{1}{(1 - P) + P / N}$$
+
+`P = 0.95` → at most **20×**, however many cores. On a GPU, the "serial part" includes host code, transfers and launches.
+
+**Arithmetic intensity (Week 6).** FLOPs done per byte moved to or from memory.
+
+| Operation (float32) | FLOPs | Bytes | Intensity | Bound by |
+|---|:-:|:-:|:-:|---|
+| ReLU, per element | 1 | 4 read + 4 written = 8 | 0.125 FLOP/byte | **memory bandwidth** |
+| `n × n` matmul | `2n³` | `3 · 4n²` | about `n / 6` FLOP/byte | **compute** (large `n`) |
+
+> Most of today's kernels are maps like ReLU: judge them in **GB/s**, not FLOP/s (Part VII).
+
+---
+
+## The Four Questions (Week 5), Asked of a GPU
+
+| Question | Week 5: cluster (Dask / Ray) | Week 6: CuPy | Today: your kernel |
+|---|---|---|:-:|
+| **Split:** how is the work cut? | Partitions / chunks you choose | The library decides | **?** |
+| **Assign:** who does which piece? | The scheduler picks a worker | The hardware block scheduler | **?** |
+| **Move:** what data travels? | Over the network, via the object store | `cp.asarray` / `.get()` over PCIe | **?** |
+| **Wait:** who waits for whom? | `.compute()` / `ray.get()` | `synchronize()`, or implicitly in `.get()` | **?** |
+
+> Keep the question marks in mind. By the end of today you can fill in the last column
+> yourself; Part VIII checks your answers.
+
+---
+
+## CPU and GPU in One Table (Recap of Week 6)
+
+| | CPU | GPU |
+|---|---|---|
+| **Goal** | Finish **one** task as fast as possible (low latency) | Finish a **huge batch** of tasks (high throughput) |
+| **Cores** | A few dozen, large and clever | Thousands of simple lanes, grouped into SMs |
+| **Hides memory delay with** | Big caches, prediction | Switching to another ready group of threads |
+| **Happy with** | Branchy, serial code | The same operation on huge arrays |
+| **Colab T4** | n/a | 40 SMs, 2,560 CUDA cores |
+
+> The GPU is not "a faster CPU". It is a machine that is fast **only if you give it
+> a very large amount of independent work.** Part III is about how to describe that work.
+
+---
+
+## Warm-Up: Five Questions From Weeks 1–6
+
+1. **(Week 1)** 95% of a program parallelises perfectly. What is the best possible speedup with unlimited cores?
+2. **(Week 2)** Why is `for i in range(n): c[i] = a[i] + b[i]` slow in Python, while `c = a + b` in NumPy is fast?
+3. **(Week 3)** Four threads each run `total += x[i]` on one shared `total`, without a lock. What goes wrong?
+4. **(Weeks 4–5)** Splitting 1,000 tiny tasks over 8 processes made a program *slower*. Why?
+5. **(Week 6)** You time an 8192 × 8192 CuPy matmul with `time.perf_counter()` and get 0.02 ms. What went wrong?
+
+> Answer on paper first. Each answer returns later today.
+
+---
+
+## Warm-Up: Answers (and Where They Return Today)
+
+<style scoped>table { font-size: 18px; }</style>
+
+| # | Answer | Returns today as |
+|:-:|---|---|
+| 1 | **20×**: the 5% serial part caps the speedup | Host code and transfers are the GPU's "serial part" |
+| 2 | Python runs the interpreter once **per element**; NumPy runs one compiled loop | A kernel is that compiled loop body, run by thousands of threads |
+| 3 | **Lost updates**: a race on shared, mutable state | The same race when many GPU threads write one location |
+| 4 | Per-task overhead outweighs the tiny work: **granularity** | A kernel over 1,000 elements leaves the GPU idle |
+| 5 | The launch is **asynchronous**: you timed the launch, not the work | Kernel launches are asynchronous too: synchronize before timing |
+
+---
+
+<!-- _class: lead -->
+
+# Part II
+# Why Write Your Own Kernels?
+
+*Week 6: you used GPU kernels through CuPy. Why would you write one yourself?*
 
 ---
 
@@ -101,29 +264,76 @@ Three reasons:
 
 ---
 
-## Today's Arc
+## What CuPy Does Under the Hood
 
-| Part | Content | Time |
-|------|---------|:----:|
-| I | **Foundations: data-parallel thinking, vocabulary** | 20 min |
-| II | Why write kernels (motivation + recap) | 10 min |
-| III | **CUDA programming model + seven worked CUDA C/C++ examples** | 65 min |
-| IV | Numba CUDA: your first kernel | 15 min |
-| V | Memory transfers and device arrays | 10 min |
-| *Break* | | 10 min |
-| VI | AI examples: ReLU, softmax, attention scores | 20 min |
-| VII | Performance: when your kernel wins (and loses) | 10 min |
-| VIII | Connection to the course + lab | 10 min |
-| **Total** | | ~170 min |
+When you wrote this in Week 6:
 
-> Short on time? Assign Part I as pre-reading, do Examples 1–5 live, and move Examples 6–7 to the lab.
+```python
+c_gpu = a_gpu @ b_gpu       # one line
+```
+
+The call chain was:
+
+```text
+Your Python
+  → CuPy dispatcher
+    → cuBLAS GEMM kernel (hand-tuned, thousands of lines of CUDA)
+      → CUDA runtime → driver → SMs
+```
+
+You got a fast matmul, but you cannot rewrite its internal thread mapping,
+fuse its next operation into the same kernel, or change its memory-access pattern.
+
+> This week: you write the kernel. You control the mapping and per-thread code.
+
+---
+
+## When You Need Your Own Kernel
+
+| Scenario | Why CuPy isn't enough |
+|----------|----------------------|
+| Custom activation: `x * sigmoid(x)` (SiLU/Swish) | Exists in PyTorch, but what about a *new* activation you invented? |
+| Fused bias + activation + residual add | Separate element-wise kernels create intermediates and extra memory traffic. |
+| Custom attention mask | Standard softmax exists; your sparse mask pattern doesn't. |
+| Preprocessing on GPU | Decode JPEG → normalise → augment, all without leaving VRAM. |
+
+> **Rule:** Use library kernels when they exist. Write your own when:
+> (a) the operation doesn't exist, or
+> (b) fusing multiple operations saves memory bandwidth.
+
+---
+
+## Kernel Fusion: The Key Motivation
+
+From Week 6's roofline: element-wise ops are often **bandwidth-bound**.
+
+```text
+Unfused: three kernels and materialised intermediates
+  t1 = x + bias       → read x, bias; write t1
+  t2 = relu(t1)       → read t1;     write t2
+  out = t2 + residual → read t2, residual; write out
+
+Fused: one kernel, no full-size t1 or t2
+  out = relu(x + bias) + residual
+```
+
+Benefits:
+- Less global-memory traffic and fewer kernel-launch overheads.
+- No large intermediate arrays to allocate and revisit.
+
+> The speedup is **not automatically “3×”**: measure it. Normalisation and softmax
+> also need reductions, so they are not a simple one-pass element-wise chain.
+
+*To write a fused kernel, we first need a way to **think** about parallel work: Part III.*
 
 ---
 
 <!-- _class: lead -->
 
-# Part I
+# Part III
 # Foundations: Thinking in Data-Parallel Terms
+
+*Before writing any code: how to see the parallel work inside a problem.*
 
 ---
 
@@ -145,22 +355,6 @@ A 1080p frame has about **2 million pixels**, redrawn 60 times a second.
 > A neural-network layer has the same shape: **one small computation on millions of independent numbers.**
 
 <style scoped>table { font-size: 18px; }</style>
-
-
----
-
-## CPU and GPU in One Table (Recap of Week 6)
-
-| | CPU | GPU |
-|---|---|---|
-| **Goal** | Finish **one** task as fast as possible (low latency) | Finish a **huge batch** of tasks (high throughput) |
-| **Cores** | A few dozen, large and clever | Thousands of simple lanes, grouped into SMs |
-| **Hides memory delay with** | Big caches, prediction | Switching to another ready group of threads |
-| **Happy with** | Branchy, serial code | The same operation on huge arrays |
-| **Colab T4** | n/a | 40 SMs, 2,560 CUDA cores |
-
-> The GPU is not "a faster CPU". It is a machine that is fast **only if you give it
-> a very large amount of independent work.** Today is about how to describe that work.
 
 ---
 
@@ -215,7 +409,7 @@ output  :   0    5    0    3    0    0    4    1
 - So elements can be processed **in any order, by any number of workers**, and the answer never changes.
 - A GPU uses that freedom: **one thread per element.**
 
-> Vector add, ReLU, bias add, SiLU: all maps. Examples 1–4 and 6–7 of Part III are maps.
+> Vector add, ReLU, bias add, SiLU: all maps. Examples 1–4 and 6–7 in Part IV are maps.
 > A kernel is just the body of the map; the launch supplies the elements.
 
 ---
@@ -313,7 +507,7 @@ kernel(a, b, c):
 - A **CUDA thread** is a *logical* thread of control. Launching a million does **not** create a million operating-system threads.
 - The hardware schedules **blocks** onto SMs as resources free up, in no guaranteed order.
 
-> Part III turns these ideas into code, one small program at a time.
+> Part IV turns these ideas into code, one small program at a time.
 
 ---
 
@@ -355,81 +549,20 @@ kernel(a, b, c):
 3. **10 rounds**, since `2^10 = 1024`. (A single thread would need 1,023 dependent additions.)
 4. Too little parallel work: most SMs stay idle, and launch and transfer overhead dominate.
 5. Threads are launched in whole **blocks**, so the launch can contain more threads than elements.
-   The extra threads must be stopped by a **bounds check**: Part III, Examples 2 and 3.
+   The extra threads must be stopped by a **bounds check**: Part IV, Examples 2 and 3.
 
 ---
 
 <!-- _class: lead -->
 
-# Part II
-# Why Write Kernels?
+# Part IV
+# The CUDA Programming Model, with Worked Examples
+
+*The rules of CUDA, each one followed by a small C/C++ program you can run.*
 
 ---
 
-## What CuPy Does Under the Hood
-
-When you wrote this in Week 6:
-
-```python
-c_gpu = a_gpu @ b_gpu       # one line
-```
-
-The call chain was:
-
-```text
-Your Python
-  → CuPy dispatcher
-    → cuBLAS GEMM kernel (hand-tuned, thousands of lines of CUDA)
-      → CUDA runtime → driver → SMs
-```
-
-You got a fast matmul, but you cannot rewrite its internal thread mapping,
-fuse its next operation into the same kernel, or change its memory-access pattern.
-
-> This week: you write the kernel. You control the mapping and per-thread code.
-
----
-
-## When You Need Your Own Kernel
-
-| Scenario | Why CuPy isn't enough |
-|----------|----------------------|
-| Custom activation: `x * sigmoid(x)` (SiLU/Swish) | Exists in PyTorch, but what about a *new* activation you invented? |
-| Fused bias + activation + residual add | Separate element-wise kernels create intermediates and extra memory traffic. |
-| Custom attention mask | Standard softmax exists; your sparse mask pattern doesn't. |
-| Preprocessing on GPU | Decode JPEG → normalise → augment, all without leaving VRAM. |
-
-> **Rule:** Use library kernels when they exist. Write your own when:
-> (a) the operation doesn't exist, or
-> (b) fusing multiple operations saves memory bandwidth.
-
----
-
-## Kernel Fusion: The Key Motivation
-
-From Week 6's roofline: element-wise ops are often **bandwidth-bound**.
-
-```text
-Unfused: three kernels and materialised intermediates
-  t1 = x + bias       → read x, bias; write t1
-  t2 = relu(t1)       → read t1;     write t2
-  out = t2 + residual → read t2, residual; write out
-
-Fused: one kernel, no full-size t1 or t2
-  out = relu(x + bias) + residual
-```
-
-Benefits:
-- Less global-memory traffic and fewer kernel-launch overheads.
-- No large intermediate arrays to allocate and revisit.
-
-> The speedup is **not automatically “3×”**: measure it.
-> Normalisation and softmax also require reductions, so they cannot be fused as
-> a trivial one-pass element-wise chain without a cooperation strategy.
-
----
-
-## Recap: Architecture vs. Programming Model
+## From Week 6 Hardware to Today's Software
 
 | Hardware view (Week 6) | Software view (this week) |
 |---|---|
@@ -443,13 +576,6 @@ Benefits:
 - Blocks may run in any order and in waves; launched threads are **not all simultaneously resident**.
 
 > CUDA separates what you express (a grid of work) from how hardware schedules it.
-
----
-
-<!-- _class: lead -->
-
-# Part III
-# The CUDA Programming Model, with Worked Examples
 
 ---
 
@@ -485,7 +611,7 @@ Python / C++ starts the program
 
 ## A CUDA Program in Six Steps
 
-| Step | Where | CUDA C/C++ (Part III examples) | Numba CUDA (Part IV) |
+| Step | Where | CUDA C/C++ (Part IV examples) | Numba CUDA (Part V) |
 |:---:|---|---|---|
 | 1 | Host | `malloc`, fill `h_a`, choose `N` | Create NumPy inputs, choose `N` |
 | 2 | Host → device | `cudaMalloc` + `cudaMemcpy(..., HostToDevice)` | `cuda.to_device(a_np)` |
@@ -558,108 +684,6 @@ Therefore:
 
 ---
 
-## Warps and SIMT: The Execution Granularity
-
-![h:245](img/w08-active-warp-lanes.png)
-
-- A **warp** contains 32 threads scheduled together on an SM.
-- Under **SIMT**, one instruction stream is applied across thread lanes.
-- If threads take different branches, subsets are active at different times: **divergence**.
-- Modern GPUs support independent thread scheduling; do not write code that relies on implicit lockstep.
-
-*Source: NVIDIA CUDA Programming Guide, Fig. 7 (even-indexed lanes active).*
-
----
-
-## Divergence: Correctness vs. Performance
-
-```python
-@cuda.jit
-def branchy(x, out):
-    i = cuda.grid(1)
-    if i < x.size:
-        if x[i] >= 0:
-            out[i] = x[i]       # one subset of a warp
-        else:
-            out[i] = -x[i]      # another subset
-```
-
-- The code is correct: each thread follows its own path.
-- A warp may spend time executing both paths with different active lanes.
-- Occasional boundary checks are fine; highly irregular work can reduce efficiency.
-
-> First make the mapping correct. Profile before redesigning around divergence.
-
----
-
-## Memory in the Programming Model
-
-| Storage | Visible to | Lifetime / role | This week |
-|---|---|---|---|
-| Registers / local variables | One thread | Intermediate values | Used implicitly |
-| Shared memory | Threads in one block | Cooperation and reuse | Preview; Week 9 |
-| Global device memory | All threads in the grid | Inputs, outputs, device arrays | Used explicitly |
-| Host memory | CPU | NumPy arrays and application data | Copied to/from device |
-
-**Important:** “local memory” is per-thread, but is not necessarily fast or on-chip.
-“Shared memory” is on-chip scratchpad shared by a block.
-
-> Correct scope and ownership first; memory optimisation next week.
-
----
-
-## Two Different Synchronization Levels
-
-| Mechanism | Scope | Purpose |
-|---|---|---|
-| `cuda.syncthreads()` | Threads in **one block** | Barrier before/after shared-memory cooperation |
-| `cuda.synchronize()` | Host waits for device work | Ensure completion before timing or using results |
-
-Rules:
-
-- Every thread in a block must reach the same `cuda.syncthreads()` barrier.
-- Do not place that barrier inside a condition that only some threads enter.
-- Kernel launches are asynchronous with respect to the host.
-- Operations in one stream are ordered; streams and overlap come later.
-
----
-
-## The Same Model in CUDA C++ and Numba CUDA
-
-| General CUDA concept | CUDA C++ spelling | Numba CUDA spelling |
-|---|---|---|
-| Kernel declaration | `__global__ void k(...)` | `@cuda.jit def k(...):` |
-| Thread in block | `threadIdx.x` | `cuda.threadIdx.x` |
-| Block in grid | `blockIdx.x` | `cuda.blockIdx.x` |
-| Threads in block | `blockDim.x` | `cuda.blockDim.x` |
-| Launch | `k<<<blocks, threads>>>(...)` | `k[blocks, threads](...)` |
-| Block barrier | `__syncthreads()` | `cuda.syncthreads()` |
-| Device synchronisation | `cudaDeviceSynchronize()` | `cuda.synchronize()` |
-
-> The language changes. The execution, memory, and synchronization model does not.
-
----
-
-## Concepts, Then Worked Examples
-
-From here on, each concept slide is followed by a **worked example** in CUDA C/C++.
-Every example has the same four slides:
-**Problem** → **Step by step** (worked numbers: do it on paper first) → **Full code** → **Expected output**.
-
-| # | Example | Concept it teaches |
-|:-:|---|---|
-| 1 | Hello, threads | The core index formula |
-| 2 | Vector add, N = 10 | Memory: allocate → copy → launch → copy back → free |
-| 3 | The missing bounds check | Why `if (i < n)` is not optional |
-| 4 | Launch configuration | `blocks = ceil(N / threads)`, hardware limits |
-| 5 | Error checking | `CUDA_CHECK`, `cudaGetLastError` |
-| 6 | A 5 × 7 matrix | 2D indexing |
-| 7 | Grid-stride loop | One fixed grid for any `N` |
-
-> Habit to build: **predict the output on paper, then run the program.**
-
----
-
 ## CUDA C++ in four new things
 
 A `.cu` file is ordinary C++ plus:
@@ -696,6 +720,26 @@ On Colab (Runtime → Change runtime type → **T4 GPU**):
 - `nvcc` splits the file: host code goes to your C++ compiler, kernels to the GPU compiler.
 - Error `no kernel image is available`? Add `-arch=native` (or `-arch=sm_75` for a T4).
 - All seven programs are in 📁 `week08/cuda_c/`.
+
+---
+
+## Concepts, Then Worked Examples
+
+From here on, each concept slide is followed by a **worked example** in CUDA C/C++.
+Every example has the same four slides:
+**Problem** → **Step by step** (worked numbers: do it on paper first) → **Full code** → **Expected output**.
+
+| # | Example | Concept it teaches |
+|:-:|---|---|
+| 1 | Hello, threads | The core index formula |
+| 2 | Vector add, N = 10 | Memory: allocate → copy → launch → copy back → free |
+| 3 | The missing bounds check | Why `if (i < n)` is not optional |
+| 4 | Launch configuration | `blocks = ceil(N / threads)`, hardware limits |
+| 5 | Error checking | `CUDA_CHECK`, `cudaGetLastError` |
+| 6 | A 5 × 7 matrix | 2D indexing |
+| 7 | Grid-stride loop | One fixed grid for any `N` |
+
+> Habit to build: **predict the output on paper, then run the program.**
 
 ---
 
@@ -972,10 +1016,11 @@ Check against the table: `c[9] = a[9] + b[9] = 9 + 90 = 99` ✓
 
 ## Bounds Checking: Don't Read Past the Array
 
-```python
-i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-if i < N:                    # ← CRITICAL
-    c[i] = a[i] + b[i]
+```cpp
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+if (i < N) {                 // ← CRITICAL
+    c[i] = a[i] + b[i];
+}
 ```
 
 Why? Grid size is rounded up:
@@ -1108,12 +1153,6 @@ unsafe (no check):        0  1  2  3  4  5  6  7  8  9 | 10 11
 |-----------|---------------|------------|
 | `blockDim.x` (threads per block) | Start with 128 or 256 | Max 1024 threads/block; a multiple of 32 is a performance recommendation, not a syntax rule. |
 | Grid size | `⌈N / blockDim⌉` | Can be very large (millions) |
-
-```python
-threads_per_block = 256
-blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
-my_kernel[blocks_per_grid, threads_per_block](a, b, c, N)
-```
 
 ```cpp
 int threads = 256;
@@ -1440,28 +1479,22 @@ cudaMalloc afterwards                          -> an illegal memory access was e
 
 Use **x for columns** and **y for rows** so consecutive x-threads read adjacent columns.
 
-```python
-col = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
-row = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+```cpp
+int col = blockIdx.x * blockDim.x + threadIdx.x;   // x → columns
+int row = blockIdx.y * blockDim.y + threadIdx.y;   // y → rows
 
-# Equivalent shortcut:
-# col, row = cuda.grid(2)
-
-if row < n_rows and col < n_cols:
-    out[row, col] = ...
+if (row < n_rows && col < n_cols)                  // check BOTH dimensions
+    out[row * n_cols + col] = ...;                 // flat, row-major position
 ```
 
-In CUDA C/C++: same two lines without `cuda.`, and a flat array `out[row * n_cols + col]`.
-
-```python
-threads = (16, 16)  # (x=columns, y=rows), 256 threads
-blocks = ((n_cols + 15) // 16,
-          (n_rows + 15) // 16)
-kernel[blocks, threads](...)
+```cpp
+dim3 threads(16, 16);                              // (x = columns, y = rows): 256 threads
+dim3 blocks((n_cols + 15) / 16, (n_rows + 15) / 16);
+kernel<<<blocks, threads>>>(...);
 ```
 
-> `cuda.grid(2)` returns `(x, y)`, **not automatically `(row, col)`**.
 > For a 4096×4096 matrix, this launch creates 256×256 blocks and 16.7M threads.
+> In Numba (Part V) the shortcut `col, row = cuda.grid(2)` returns `(x, y)`, **not** `(row, col)`.
 
 ---
 
@@ -1616,13 +1649,10 @@ grid = (2, 2) blocks, block = (4, 4) threads -> 8 x 8 = 64 threads, 35 do work
 
 One thread per element is simple, but not the only valid mapping.
 
-```python
-i = cuda.grid(1)          # first element for this thread
-stride = cuda.gridsize(1) # total threads in the launch
-
-while i < c.size:
-    c[i] = a[i] + b[i]
-    i += stride
+```cpp
+int stride = blockDim.x * gridDim.x;               // total threads in the launch
+for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride)
+    c[i] = a[i] + b[i];                            // first element, then every stride-th one
 ```
 
 - Each thread handles several elements, `stride` positions apart.
@@ -1630,7 +1660,7 @@ while i < c.size:
 - Consecutive threads still access consecutive addresses in each iteration.
 
 > Use one-thread-per-element for today's first kernels; remember grid-stride
-> for larger or reusable kernels. Correctness still requires the `while i < N` check.
+> for larger or reusable kernels. The loop test `i < n` is the bounds check.
 
 ---
 
@@ -1675,9 +1705,9 @@ Threads 0–3 handle **3** elements each, threads 4–7 handle **2**: `4*3 + 4*2
 
 - **One kernel covers every `N`**; the loop test `i < n` *is* the bounds check.
 - Neighbouring threads still touch neighbouring addresses in every lap.
-- Honest note: for simple kernels one-thread-per-element is just as fast; grid-stride suits reusable kernels.
+- For simple kernels one-thread-per-element is just as fast; grid-stride suits reusable kernels.
 
-<style scoped>table { font-size: 18px; } pre { font-size: 15px; }</style>
+<style scoped>section { font-size: 22px; } table { font-size: 17px; } pre { font-size: 15px; }</style>
 
 ---
 
@@ -1800,6 +1830,86 @@ N =  5000000: elements per thread ~ 610.4, wrong elements = 0
 
 ---
 
+## Under the Hood: How the Threads Actually Run
+
+The seven examples treated every thread as independent. Four facts about how they really run:
+
+| Fact | Why it matters |
+|---|---|
+| Threads execute in **warps of 32** | A warp shares one instruction stream (SIMT) |
+| Different branches in one warp → **divergence** | Correct, but both paths take time |
+| Threads see **registers, shared, global** memory | Where data lives decides speed (Week 9) |
+| Two kinds of **synchronization** | Inside a block vs. host waiting for the device |
+
+> None of these change today's answers. They explain the timings in Part VII and next week's optimisations.
+
+---
+
+## Warps and SIMT: The Execution Granularity
+
+![h:245](img/w08-active-warp-lanes.png)
+
+- A **warp** contains 32 threads scheduled together on an SM.
+- Under **SIMT**, one instruction stream is applied across thread lanes.
+- If threads take different branches, subsets are active at different times: **divergence**.
+- Modern GPUs support independent thread scheduling; do not write code that relies on implicit lockstep.
+
+*Source: NVIDIA CUDA Programming Guide, Fig. 7 (even-indexed lanes active).*
+
+---
+
+## Divergence: Correctness vs. Performance
+
+```cpp
+__global__ void branchy(const float *x, float *out, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        if (x[i] >= 0) out[i] = x[i];     // one subset of a warp's lanes
+        else           out[i] = -x[i];    // the other subset
+    }
+}
+```
+
+- The code is correct: each thread follows its own path.
+- A warp may spend time executing both paths with different active lanes.
+- Occasional boundary checks are fine; highly irregular work can reduce efficiency.
+
+> First make the mapping correct. Profile before redesigning around divergence.
+
+---
+
+## Memory in the Programming Model
+
+| Storage | Visible to | Lifetime / role | This week |
+|---|---|---|---|
+| Registers / local variables | One thread | Intermediate values | Used implicitly |
+| Shared memory | Threads in one block | Cooperation and reuse | Preview; Week 9 |
+| Global device memory | All threads in the grid | Inputs, outputs, device arrays | Used explicitly |
+| Host memory | CPU | NumPy arrays and application data | Copied to/from device |
+
+**Important:** “local memory” is per-thread, but is not necessarily fast or on-chip.
+“Shared memory” is on-chip scratchpad shared by a block.
+
+> Correct scope and ownership first; memory optimisation next week.
+
+---
+
+## Two Different Synchronization Levels
+
+| Mechanism (C++ · Numba) | Scope | Purpose |
+|---|---|---|
+| `__syncthreads()` · `cuda.syncthreads()` | Threads in **one block** | Barrier before/after shared-memory cooperation |
+| `cudaDeviceSynchronize()` · `cuda.synchronize()` | Host waits for device work | Ensure completion before timing or using results |
+
+Rules:
+
+- Every thread in a block must reach the same block barrier.
+- Do not place that barrier inside a condition that only some threads enter.
+- Kernel launches are asynchronous with respect to the host (warm-up question 5).
+- Operations in one stream are ordered; streams and overlap come later.
+
+---
+
 ## Example summary: the seven recipes
 
 | Need | Recipe |
@@ -1812,14 +1922,17 @@ N =  5000000: elements per thread ~ 610.4, wrong elements = 0
 | 2D index | `col = blockIdx.x*blockDim.x + threadIdx.x`, `row = blockIdx.y*blockDim.y + threadIdx.y`, flat `row*n_cols + col` |
 | Any `N`, fixed grid | `for (i = first; i < n; i += blockDim.x * gridDim.x)` |
 
+> You can now write and check a complete CUDA program.
 > Next: the same recipes in **Python** (Numba CUDA). Only the spelling changes.
 
 ---
 
 <!-- _class: lead -->
 
-# Part IV
-# Numba CUDA: Your First Kernel
+# Part V
+# The Same Kernels in Python: Numba CUDA
+
+*Everything from Part IV, now written in Python, plus how to move data efficiently.*
 
 ---
 
@@ -1828,7 +1941,8 @@ N =  5000000: elements per thread ~ 610.4, wrong elements = 0
 > Numba CUDA compiles a **restricted subset of Python** into device code
 > that follows the CUDA execution model.
 
-It is not a way to run arbitrary Python objects or libraries inside a kernel.
+You met Numba in **Week 2**: `@njit` compiled your loop for the **CPU**.
+Now `@cuda.jit` compiles a **kernel** for the GPU (no arbitrary Python objects or libraries inside).
 
 ```python
 from numba import cuda
@@ -1845,6 +1959,8 @@ def my_kernel(a, b, c):
 | Abstraction level | Array operations | Individual threads |
 | You control | What to compute | How each thread computes |
 | Use when | Standard operations | Custom / fused operations |
+
+<style scoped>section { font-size: 22px; } table { font-size: 18px; } pre { font-size: 16px; }</style>
 
 ---
 
@@ -1885,14 +2001,15 @@ def vector_add(a, b, c):
 |----------|---------|
 | `cuda.grid(1)` | Global index in 1D (= `blockIdx.x * blockDim.x + threadIdx.x`) |
 | `cuda.grid(2)` | `(x, y)` in 2D; this lecture maps `x→col`, `y→row` |
+
 > `cuda.blockIdx`, `cuda.threadIdx`, `cuda.blockDim`, and `cuda.gridDim`
-> expose the lower-level geometry from Part III. The first launch triggers JIT compilation.
+> expose the lower-level geometry from Part IV. The first launch triggers JIT compilation.
 
 ---
 
-## Part III Examples in Numba: New Spelling
+## Part IV Examples in Numba: New Spelling
 
-| CUDA C/C++ (Part III examples) | Numba CUDA |
+| CUDA C/C++ (Part IV examples) | Numba CUDA |
 |---|---|
 | `__global__ void k(...)` | `@cuda.jit` `def k(...):` |
 | `blockIdx.x * blockDim.x + threadIdx.x` | `cuda.grid(1)` (or the full formula) |
@@ -1903,7 +2020,7 @@ def vector_add(a, b, c):
 | `cudaFree` | automatic (freed when no longer referenced) |
 | `dim3 threads(4, 4)` · `k<<<blocks, threads>>>(args)` | `threads = (4, 4)` · `k[blocks, threads](args)` |
 | `CUDA_CHECK(...)`, `cudaGetLastError()` | a failed CUDA call raises a Python exception (`CudaAPIError`) |
-| `cudaDeviceSynchronize()` | `cuda.synchronize()` |
+| `__syncthreads()` · `cudaDeviceSynchronize()` | `cuda.syncthreads()` · `cuda.synchronize()` |
 
 > 📁 `week08/06_indexing_numba.py` re-runs Examples 1, 2, 3, 6, 7. Numba, like C, does **not** bounds-check.
 
@@ -1967,7 +2084,7 @@ assert np.allclose(c_np, a_np + b_np)
 
 ---
 
-## Live Demo: Run It on Colab
+## Try It: Run It on Colab
 
 ```python
 # First: verify GPU is available
@@ -1979,7 +2096,7 @@ print(cuda.is_available())        # True
 print(cuda.get_current_device())  # Tesla T4
 ```
 
-> Run `01_vector_add.py` live. Ask students:
+> Run `01_vector_add.py`. Before it prints, answer for yourself:
 > - "How many threads are launched?" → 39,063 × 256 = **10,000,128**
 > - "How many blocks?" → **39,063**
 > - "What does each thread do?" → One addition
@@ -2008,39 +2125,7 @@ def vector_add(a, b, c):
 
 ---
 
-## Common Mistakes: Indexing, Launches, and Transfers
-
-| Mistake | Symptom | Fix |
-|---------|---------|-----|
-| Forgetting bounds check | Illegal access, garbage, or later CUDA error | Check `i < N` when the launch is rounded up |
-| Wrong grid size | Some elements uncomputed | Use `ceil(N / tpb)`, not floor division |
-| Keeping an `N`-element loop in every thread | Duplicated work and possible races | Map indices to work; use per-thread loops intentionally |
-| Passing host arrays implicitly | Hidden host↔device copies and synchronous behaviour | Use `cuda.to_device()` explicitly |
-| Forgetting synchronization | Timing measures launch, not completion | Synchronize before reading elapsed time |
-
----
-
-## Common Mistakes: Races, Barriers, and Debugging
-
-| Mistake | Why it is wrong | Fix |
-|---------|-----------------|-----|
-| Many threads write one location | Race; result can depend on order | Use a reduction or an appropriate atomic |
-| Early return before a block barrier | Not all block threads reach the barrier | Restructure so every thread reaches `syncthreads()` |
-| Excessive kernel `print()` | Noisy output and timing distortion | Use small debug launches; avoid prints in benchmarks |
-| Optimising before verification | Fast code may compute the wrong answer | Compare against a CPU reference first |
-
-> Debugging order: **tiny input → correct result → synchronize → benchmark → profile**.
-
----
-
-<!-- _class: lead -->
-
-# Part V
-# Memory Transfers and Device Arrays
-
----
-
-## The Two Memory Spaces (Recap from Week 6)
+## Device Memory in Python: The Two Memory Spaces (Recap from Week 6)
 
 ```text
 ┌─────────────────────┐         ┌─────────────────────┐
@@ -2155,10 +2240,37 @@ result = c_d.copy_to_host()            # safe to read
 
 ---
 
+## Common Mistakes: Indexing, Launches, and Transfers
+
+| Mistake | Symptom | Fix |
+|---------|---------|-----|
+| Forgetting bounds check | Illegal access, garbage, or later CUDA error | Check `i < N` when the launch is rounded up |
+| Wrong grid size | Some elements uncomputed | Use `ceil(N / tpb)`, not floor division |
+| Keeping an `N`-element loop in every thread | Duplicated work and possible races | Map indices to work; use per-thread loops intentionally |
+| Passing host arrays implicitly | Hidden host↔device copies and synchronous behaviour | Use `cuda.to_device()` explicitly |
+| Forgetting synchronization | Timing measures launch, not completion | Synchronize before reading elapsed time |
+
+---
+
+## Common Mistakes: Races, Barriers, and Debugging
+
+| Mistake | Why it is wrong | Fix |
+|---------|-----------------|-----|
+| Many threads write one location | Race; result can depend on order | Use a reduction or an appropriate atomic |
+| Early return before a block barrier | Not all block threads reach the barrier | Restructure so every thread reaches `syncthreads()` |
+| Excessive kernel `print()` | Noisy output and timing distortion | Use small debug launches; avoid prints in benchmarks |
+| Optimising before verification | Fast code may compute the wrong answer | Compare against a CPU reference first |
+
+> Debugging order: **tiny input → correct result → synchronize → benchmark → profile**.
+
+---
+
 <!-- _class: lead -->
 
 # Part VI
-# AI Examples: From ReLU to Attention
+# AI Kernels: From ReLU to Attention
+
+*From toy arrays to the operations inside a neural network.*
 
 ---
 
@@ -2273,6 +2385,8 @@ attention_scores[blocks, threads](Q, K, scores)
 # Part VII
 # Performance: When Your Kernel Wins (and Loses)
 
+*Correct first. Now: is it fast, and if not, why not?*
+
 ---
 
 ## Why Your First Kernel Is Slow (and That's OK)
@@ -2361,21 +2475,23 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 <!-- _class: lead -->
 
 # Part VIII
-# Connection to the Course + Lab
+# Wrap-Up and Lab
+
+*What to remember, and what to do next.*
 
 ---
 
-## The Four Questions on GPU (Updated)
+## The Four Questions, Answered (Week 5 → Today)
 
-| Question | Week 6 (CuPy) | This week (Numba CUDA) |
+| Question | Week 6 (CuPy) | Today (your kernel) |
 |----------|--------------|----------------------|
-| **Split** | CuPy splits automatically | You choose: one thread per element |
-| **Assign** | Hardware assigns blocks to SMs | Same (you don't control) |
-| **Move** | `cp.asarray` / `.get()` | `cuda.to_device` / `.copy_to_host()` |
-| **Wait** | Implicit in `.get()` | `cuda.synchronize()` |
+| **Split** | CuPy splits automatically | **You** choose: one thread per element, or a grid-stride loop |
+| **Assign** | Hardware assigns blocks to SMs | Same: the block scheduler, in no guaranteed order |
+| **Move** | `cp.asarray` / `.get()` | `cudaMemcpy` · `cuda.to_device` / `.copy_to_host()` |
+| **Wait** | Implicit in `.get()` | `cudaDeviceSynchronize()` · `cuda.synchronize()`, or the copy back |
 
-> The questions don't change. The level of control does.
-> CuPy: you say WHAT. Numba CUDA: you say HOW (per thread).
+> Compare with the question marks from Part I. The questions don't change; the level of control does.
+> CuPy: you say WHAT. A kernel: you say HOW (per thread).
 
 ---
 
@@ -2447,9 +2563,8 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 **Bonus:** Implement a 2D kernel for matrix transpose. Compare against `cp.transpose`.
 
----
-
-## Pre-Class Checklist (for you)
+<!--
+Instructor pre-class checklist:
 
 - [ ] Verify Numba CUDA works on Colab:
   ```python
@@ -2462,12 +2577,25 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 - [ ] Prepare the Colab notebook with cells pre-written (students fill in kernels)
 - [ ] Test `cuda.event_elapsed_time` for timing (more reliable than perf_counter)
 - [ ] Have a CPU fallback ready in case Colab GPU quota is exhausted
+-->
+
+---
+
+## Before Next Week
+
+- **Finish both labs:** the CUDA C warm-up (`lab_week08_cuda_c.ipynb`) and the Numba exercises, with your results table.
+- **Re-run Examples 1–7** and change one thing in each. Predict the output *before* you run it.
+- **Read:** NVIDIA CUDA Programming Guide, *Programming Model* (the figures used today).
+- **Think ahead:** which of today's kernels would gain from threads in a block **sharing** data?
+  (Hint: softmax and attention, Part VI.) That is next week's topic.
+
+> Week 9: the CUDA memory hierarchy (shared memory, coalescing, tiling) and profiling kernels.
 
 ---
 
 ## Official References
 
-- Foundations in Part I follow [Stanford CS149, Fall 2023](https://gfxcourses.stanford.edu/cs149/fall23): Lecture 7 (GPU Architecture & CUDA Programming) and Lecture 8 (Data-Parallel Thinking)
+- Foundations in Part III follow [Stanford CS149, Fall 2023](https://gfxcourses.stanford.edu/cs149/fall23): Lecture 7 (GPU Architecture & CUDA Programming) and Lecture 8 (Data-Parallel Thinking)
 - [NVIDIA CUDA Programming Guide — Programming Model](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
 - [Numba CUDA — Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html) · [Memory](https://nvidia.github.io/numba-cuda/user/memory.html) · [Installation](https://nvidia.github.io/numba-cuda/user/installation.html)
 - [Numba CUDA project status](https://nvidia.github.io/numba-cuda/) · [Course repository](https://github.com/adaskin/hpc-for-ai-course)
