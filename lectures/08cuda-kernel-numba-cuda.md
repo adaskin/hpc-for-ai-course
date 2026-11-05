@@ -184,7 +184,7 @@ $$S(N) = \frac{1}{(1 - P) + P / N}$$
 | **Colab T4** | n/a | 40 SMs, 2,560 CUDA cores |
 
 > The GPU is not "a faster CPU". It is a machine that is fast **only if you give it
-> a very large amount of independent work.** Part III is about how to describe that work.
+> a very large amount of independent work.**
 
 ---
 
@@ -327,8 +327,6 @@ Benefits:
 ---
 
 
-
-# Part III
 # Foundations: Thinking in Data-Parallel Terms
 
 *Before writing any code: how to see the parallel work inside a problem.*
@@ -408,7 +406,7 @@ output  :   0    5    0    3    0    0    4    1
 - So elements can be processed **in any order, by any number of workers**, and the answer never changes.
 - A GPU uses that freedom: **one thread per element.**
 
-> Vector add, ReLU, bias add, SiLU: all maps. Examples 1–4 and 6–7 in Part IV are maps.
+> Vector add, ReLU, bias add, SiLU: all maps.
 > A kernel is just the body of the map; the launch supplies the elements.
 
 ---
@@ -506,7 +504,6 @@ kernel(a, b, c):
 - A **CUDA thread** is a *logical* thread of control. Launching a million does **not** create a million operating-system threads.
 - The hardware schedules **blocks** onto SMs as resources free up, in no guaranteed order.
 
-> Part IV turns these ideas into code, one small program at a time.
 
 ---
 
@@ -567,7 +564,7 @@ kernel(a, b, c):
 
 > Why is "one thread per element" **not** the same as "launch exactly `N` threads"?
 
-**Answer:** Threads are launched in whole **blocks**, so the launch can contain more threads than elements. The extra threads must be stopped by a **bounds check** (Part IV, Examples 2 and 3).
+**Answer:** Threads are launched in whole **blocks**, so the launch can contain more threads than elements. The extra threads must be stopped by a **bounds check**.
 
 
 ---
@@ -627,7 +624,7 @@ Python / C++ starts the program
 
 ## A CUDA Program in Six Steps
 
-| Step | Where | CUDA C/C++ (Part IV examples) | Numba CUDA (Part V) |
+| Step | Where | CUDA C/C++ | Numba CUDA  |
 |:---:|---|---|---|
 | 1 | Host | `malloc`, fill `h_a`, choose `N` | Create NumPy inputs, choose `N` |
 | 2 | Host → device | `cudaMalloc` + `cudaMemcpy(..., HostToDevice)` | `cuda.to_device(a_np)` |
@@ -1927,7 +1924,7 @@ Rules:
 
 # The Same Kernels in Python: Numba CUDA
 
-*Everything from Part IV, now written in Python, plus how to move data efficiently.*
+*Everything now written in Python, plus how to move data efficiently.*
 
 ---
 
@@ -1998,13 +1995,13 @@ def vector_add(a, b, c):
 | `cuda.grid(2)` | `(x, y)` in 2D; this lecture maps `x→col`, `y→row` |
 
 > `cuda.blockIdx`, `cuda.threadIdx`, `cuda.blockDim`, and `cuda.gridDim`
-> expose the lower-level geometry from Part IV. The first launch triggers JIT compilation.
+> expose the lower-level geometry. The first launch triggers JIT compilation.
 
 ---
 
-## Part IV Examples in Numba: New Spelling
+## The Same Examples in Numba: New Spelling
 
-| CUDA C/C++ (Part IV examples) | Numba CUDA |
+| CUDA C/C++  | Numba CUDA |
 |---|---|
 | `__global__ void k(...)` | `@cuda.jit` `def k(...):` |
 | `blockIdx.x * blockDim.x + threadIdx.x` | `cuda.grid(1)` (or the full formula) |
@@ -2477,7 +2474,7 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 | **Move** | `cp.asarray` / `.get()` | `cudaMemcpy` · `cuda.to_device` / `.copy_to_host()` |
 | **Wait** | Implicit in `.get()` | `cudaDeviceSynchronize()` · `cuda.synchronize()`, or the copy back |
 
-> Compare with the question marks from Part I. The questions don't change; the level of control does.
+
 > CuPy: you say WHAT. A kernel: you say HOW (per thread).
 
 ---
@@ -2566,7 +2563,7 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 ## Official References
 
-- Foundations in Part III follow [Stanford CS149, Fall 2023](https://gfxcourses.stanford.edu/cs149/fall23): Lecture 7 (GPU Architecture & CUDA Programming) and Lecture 8 (Data-Parallel Thinking)
+- Foundations follow [Stanford CS149, Fall 2023](https://gfxcourses.stanford.edu/cs149/fall23): Lecture 7 (GPU Architecture & CUDA Programming) and Lecture 8 (Data-Parallel Thinking)
 - [NVIDIA CUDA Programming Guide — Programming Model](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
 - [Numba CUDA — Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html) · [Memory](https://nvidia.github.io/numba-cuda/user/memory.html) · [Installation](https://nvidia.github.io/numba-cuda/user/installation.html)
 - [Numba CUDA project status](https://nvidia.github.io/numba-cuda/) · [Course repository](https://github.com/adaskin/hpc-for-ai-course)
