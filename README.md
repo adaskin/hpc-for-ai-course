@@ -218,6 +218,14 @@ instructor can calibrate depth.
 | **Final Exam** | 40 % | Covers Weeks 8–13 with emphasis on GPU, pipelines, and distributed training. Open-book component for distributed-training scenarios. |
 
 ### Project Guidelines (summary)
+
+Full project briefs (these replace the summary below where they differ):
+
+- **Project 1** (Weeks 1–5): [High-Performance Similarity Search Engine](projects/project1-hp-ss-engine/project1_hp-ss-engine.md)
+- **Project 2 / final project** (Weeks 8–15): [Hardware-Aware AI Systems](projects/project2-hardware-aware-ai/project2_hardware-aware-ai.md)
+
+Original syllabus summary:
+
 - **Deliverables:** 6–10-page report (problem statement, baseline
   profiling, optimisations applied, before/after benchmarks, discussion)
   + 10-min presentation + live or recorded demo.
