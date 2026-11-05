@@ -1,40 +1,3 @@
----
-marp: true
-theme: default
-paginate: true
-size: 16:9
-style: |
-  section {
-    font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
-    font-size: 24px;
-  }
-  section.lead {
-    text-align: center;
-  }
-  section.lead h1 {
-    font-size: 52px;
-  }
-  table {
-    font-size: 20px;
-  }
-  code {
-    font-size: 18px;
-  }
-  pre {
-    font-size: 17px;
-  }
-  img {
-    display: block;
-    margin: 0 auto;
-  }
-  footer {
-    font-size: 16px;
-    opacity: 0.5;
-  }
----
-
-<!-- _class: lead -->
-<!-- _paginate: false -->
 
 # YZM 513 – High-Performance Programming for AI
 
@@ -63,114 +26,127 @@ Ammar Daşkın
 - Train across GPUs (Weeks 11–12)
 - Deploy efficiently (Week 13)
 
-> Week 6: you *used* the GPU through CuPy.
-> This week: you *program* the GPU directly. We start with a short review of Weeks 1–6,
-> because almost every idea from those weeks comes back today.
+---
+
+Week 6: you *used* the GPU through CuPy.
+This week: you *program* the GPU directly. We start with a short review of Weeks 1–6,
+because almost every idea from those weeks comes back today.
 
 ---
 
-## Learning Objectives
-
-By the end of this lecture and lab, you can:
-
-1. Connect today's kernels to the tools of Weeks 1–6: NumPy, Numba, worker pools, CuPy.
-2. Describe a computation in data-parallel terms (map, reduce, scan) and spot its dependencies.
-3. Explain **host, device, kernel, launch, grid, block, thread, warp, SM**, and how blocks reach SMs.
-4. Compute 1D and 2D thread indices and launch sizes by hand, and guard them with bounds checks.
-5. Write a complete CUDA C/C++ program: allocate, copy, launch, check errors, copy back, free.
-6. Write, verify and time the same kernels in Numba CUDA, moving data explicitly.
-7. Decide when a custom kernel is worth writing, and when a library is the better choice.
-
-> **Prerequisite:** Weeks 1–6. Part I reviews exactly the pieces we need.
-
----
 
 ## Today's Arc
 
-<style scoped>table { font-size: 17px; } th, td { padding: 4px 12px; } blockquote { font-size: 20px; }</style>
+- Review: Weeks 1–6 in one story 
+- Why write your own kernels? 
+- Foundations: thinking in data-parallel terms
+- The CUDA programming model + Examples
+- The same kernels in Python: Numba CUDA and device memory 
+- AI kernels: ReLU, fusion, softmax, attention
+- Performance: when your kernel wins (and loses) 
+- Wrap-up and lab 
 
-| Part | Content | Time |
-|------|---------|:----:|
-| I | Review: Weeks 1–6 in one story | 10 min |
-| II | Why write your own kernels? | 10 min |
-| III | Foundations: thinking in data-parallel terms | 20 min |
-| IV | The CUDA programming model + Examples 1–3 | 35 min |
-| *Break* | | 10 min |
-| IV (cont.) | Examples 4–7: launch configuration, errors, 2D, grid-stride | 30 min |
-| V | The same kernels in Python: Numba CUDA and device memory | 25 min |
-| VI | AI kernels: ReLU, fusion, softmax, attention | 20 min |
-| VII | Performance: when your kernel wins (and loses) | 10 min |
-| VIII | Wrap-up and lab | 10 min |
-| **Total** | | ~180 min |
-
-> Short on time? Assign Part III as pre-reading and move Examples 6–7 to the lab (about 135 min).
 
 ---
 
-<!-- _class: lead -->
-
-# Part I
 # Review: Weeks 1–6 in One Story
 
-*Six weeks in ten minutes: the ideas you will reuse today.*
 
----
+| Topic | Key idea | Where it comes back today |
+|---|---|---|
+| Profiling, FLOP/s, Amdahl, memory wall | **Measure first**; the serial part limits speedup | Verify a kernel, then time it properly |
+| NumPy vectorisation, Numba `@njit` / `prange` | Move the loop **out of the interpreter** | A kernel *is* the loop body; `@cuda.jit` is Numba for the GPU |
+| Threads, processes, races, locks | Split → distribute → combine; shared writes need care | One thread per element; races on a shared output |
+| GIL, `concurrent.futures`, async, pools | A **pool** of workers takes tasks from a queue | The GPU's block scheduler is a pool built in hardware |
+| Dask / Ray, the four questions | Split, assign, move, wait; **granularity** | The same four questions, answered on the GPU |
+| GPU architecture, SIMT, CuPy | A **throughput** machine; transfers are expensive | Today you write the kernels CuPy launched for you |
 
-## Six Weeks in One Table
-
-<style scoped>table { font-size: 18px; }</style>
-
-| Week | Topic | Key idea | Where it comes back today |
-|:-:|---|---|---|
-| 1 | Profiling, FLOP/s, Amdahl, memory wall | **Measure first**; the serial part limits speedup | Verify a kernel, then time it properly |
-| 2 | NumPy vectorisation, Numba `@njit` / `prange` | Move the loop **out of the interpreter** | A kernel *is* the loop body; `@cuda.jit` is Numba for the GPU |
-| 3 | Threads, processes, races, locks | Split → distribute → combine; shared writes need care | One thread per element; races on a shared output |
-| 4 | GIL, `concurrent.futures`, async, pools | A **pool** of workers takes tasks from a queue | The GPU's block scheduler is a pool built in hardware |
-| 5 | Dask / Ray, the four questions | Split, assign, move, wait; **granularity** | The same four questions, answered on the GPU |
-| 6 | GPU architecture, SIMT, CuPy | A **throughput** machine; transfers are expensive | Today you write the kernels CuPy launched for you |
-
-> One story: every week moved the same kind of loop to a **cheaper place to run**.
 
 ---
 
 ## One Loop, Six Ways: ReLU Through the Course
+Here are the six slides with the numbering removed from the titles:
 
-<style scoped>pre { font-size: 15px; }</style>
+---
+
+## Week 1: Pure Python
 
 ```python
-for i in range(n):                         # Week 1: pure Python, the interpreter runs the body n times
+for i in range(n):          # the interpreter runs the body n times
     out[i] = max(x[i], 0.0)
+```
 
-out = np.maximum(x, 0)                     # Week 2: NumPy, one compiled loop in C
+**The loop lives in the interpreter.** Every element costs a bytecode dispatch — slow, but explicit.
 
-@njit(parallel=True)                       # Week 2: Numba, your loop compiled; prange splits it over cores
+---
+
+## Week 2: NumPy
+
+```python
+out = np.maximum(x, 0)      # one compiled loop in C
+```
+
+**Move the loop out of the interpreter.** One call, one compiled C loop over the whole array.
+
+---
+
+## Week 2: Numba
+
+```python
+@njit(parallel=True)        # your loop compiled; prange splits it over cores
 def relu(x, out):
     for i in prange(x.size):
         out[i] = max(x[i], 0.0)
-
-parts = ex.map(relu_chunk, np.array_split(x, 8))   # Weeks 3–5: chunks handed to a pool of workers
-
-out_gpu = cp.maximum(x_gpu, 0)             # Week 6: CuPy, the GPU runs a kernel you did not write
 ```
 
+**Same loop, now compiled — and `prange` splits it across cores.**
+
+---
+
+## Weeks 3–5: Pools
+
+```python
+parts = ex.map(relu_chunk, np.array_split(x, 8))   # chunks handed to a pool of workers
+```
+
+**Split → distribute → combine.** A pool of workers takes chunks from a queue.
+
+---
+
+## Week 6: CuPy
+
+```python
+out_gpu = cp.maximum(x_gpu, 0)   # the GPU runs a kernel you did not write
+```
+
+**A throughput machine.** CuPy launches a kernel for you — but transfers are expensive.
+
+---
+
+## Today: Write the Kernel
+
 ```cpp
-__global__ void relu(const float *x, float *out, int n) {   // Today: you write the kernel
+__global__ void relu(const float *x, float *out, int n) {   // you write the kernel
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) out[i] = fmaxf(x[i], 0.0f);
 }
 ```
 
+**You write the kernel CuPy launched for you.** One thread per element; the block scheduler is the pool, in hardware.
+
 > Same computation every time. What changes is **who runs the loop**: the interpreter, C, CPU cores, worker processes, or thousands of GPU threads.
 
 ---
 
-## Two Laws You Will Use Today
+## Two Laws We Will Use Today
 
 **Amdahl's law (Week 1).** If a fraction `P` of the work is parallel and runs on `N` workers:
 
 $$S(N) = \frac{1}{(1 - P) + P / N}$$
 
 `P = 0.95` → at most **20×**, however many cores. On a GPU, the "serial part" includes host code, transfers and launches.
+
+---
 
 **Arithmetic intensity (Week 6).** FLOPs done per byte moved to or from memory.
 
@@ -193,7 +169,7 @@ $$S(N) = \frac{1}{(1 - P) + P / N}$$
 | **Wait:** who waits for whom? | `.compute()` / `ray.get()` | `synchronize()`, or implicitly in `.get()` | **?** |
 
 > Keep the question marks in mind. By the end of today you can fill in the last column
-> yourself; Part VIII checks your answers.
+> yourself; 
 
 ---
 
@@ -214,50 +190,81 @@ $$S(N) = \frac{1}{(1 - P) + P / N}$$
 
 ## Warm-Up: Five Questions From Weeks 1–6
 
-1. **(Week 1)** 95% of a program parallelises perfectly. What is the best possible speedup with unlimited cores?
-2. **(Week 2)** Why is `for i in range(n): c[i] = a[i] + b[i]` slow in Python, while `c = a + b` in NumPy is fast?
-3. **(Week 3)** Four threads each run `total += x[i]` on one shared `total`, without a lock. What goes wrong?
-4. **(Weeks 4–5)** Splitting 1,000 tiny tasks over 8 processes made a program *slower*. Why?
-5. **(Week 6)** You time an 8192 × 8192 CuPy matmul with `time.perf_counter()` and get 0.02 ms. What went wrong?
+## Q1 — Amdahl's Law (Week 1)
 
-> Answer on paper first. Each answer returns later today.
+> 95% of a program parallelises perfectly. What is the best possible speedup with unlimited cores?
 
----
+**Answer: 20×** — the 5% serial part caps the speedup.
 
-## Warm-Up: Answers (and Where They Return Today)
-
-<style scoped>table { font-size: 18px; }</style>
-
-| # | Answer | Returns today as |
-|:-:|---|---|
-| 1 | **20×**: the 5% serial part caps the speedup | Host code and transfers are the GPU's "serial part" |
-| 2 | Python runs the interpreter once **per element**; NumPy runs one compiled loop | A kernel is that compiled loop body, run by thousands of threads |
-| 3 | **Lost updates**: a race on shared, mutable state | The same race when many GPU threads write one location |
-| 4 | Per-task overhead outweighs the tiny work: **granularity** | A kernel over 1,000 elements leaves the GPU idle |
-| 5 | The launch is **asynchronous**: you timed the launch, not the work | Kernel launches are asynchronous too: synchronize before timing |
+**Returns today as:** host code and transfers are the GPU's "serial part."
 
 ---
 
-<!-- _class: lead -->
+## Q2 — Interpreter vs. Compiled Loop (Week 2)
 
-# Part II
-# Why Write Your Own Kernels?
+> Why is `for i in range(n): c[i] = a[i] + b[i]` slow in Python, while `c = a + b` in NumPy is fast?
 
-*Week 6: you used GPU kernels through CuPy. Why would you write one yourself?*
+**Answer:** Python runs the interpreter once **per element**; NumPy runs one compiled loop.
+
+**Returns today as:** a kernel is that compiled loop body, run by thousands of threads.
 
 ---
 
-## The Week in One Question
+## Q3 — Races (Week 3)
+
+> Four threads each run `total += x[i]` on one shared `total`, without a lock. What goes wrong?
+
+**Answer: Lost updates** — a race on shared, mutable state.
+
+**Returns today as:** the same race when many GPU threads write one location.
+
+---
+
+## Q4 — Granularity (Weeks 4–5)
+
+> Splitting 1,000 tiny tasks over 8 processes made a program *slower*. Why?
+
+**Answer:** Per-task overhead outweighs the tiny work — **granularity**.
+
+**Returns today as:** a kernel over 1,000 elements leaves the GPU idle.
+
+---
+
+## Q5 — Asynchronous Launch (Week 6)
+
+> You time an 8192 × 8192 CuPy matmul with `time.perf_counter()` and get 0.02 ms. What went wrong?
+
+**Answer:** The launch is **asynchronous** — you timed the launch, not the work.
+
+**Returns today as:** kernel launches are asynchronous too — synchronize before timing.
+
+---
+
+
+# Writing GPU Kernels
 
 > CuPy already runs kernels for you. Why write your own?
 
-Three reasons:
+---
 
-| Reason | Example |
-|--------|---------|
-| **Custom operations** | A new activation or fused residual operation not available as one library call |
-| **Kernel fusion** | Combine several element-wise ops to avoid full-size intermediates and extra memory traffic |
-| **Understanding** | You can't optimise what you don't understand. Week 9 profiles kernels. |
+> CuPy already runs kernels for you. Why write your own?
+
+-  **Custom operations**
+   -  A new activation or fused residual operation not available as one library call
+   - Most activations: e.g.`x * sigmoid(x)` (SiLU/Swish) exists in PyTorch, 
+   - but what about a *new* activation you invented?
+   - 
+---
+
+- **Kernel fusion** 
+  - Combine several element-wise ops to avoid full-size intermediates and extra memory traffic 
+  - Fused bias + activation + residual add 
+  - Separate element-wise kernels create intermediates and extra memory traffic.
+
+---
+
+- **Understanding** 
+  - You can't optimise what you don't understand. Week 9 profiles kernels. 
 
 > `torch.compile` (Week 13) fuses kernels automatically.
 > But you need to understand what fusion *does* to know when it helps.
@@ -265,8 +272,6 @@ Three reasons:
 ---
 
 ## What CuPy Does Under the Hood
-
-When you wrote this in Week 6:
 
 ```python
 c_gpu = a_gpu @ b_gpu       # one line
@@ -289,13 +294,6 @@ fuse its next operation into the same kernel, or change its memory-access patter
 ---
 
 ## When You Need Your Own Kernel
-
-| Scenario | Why CuPy isn't enough |
-|----------|----------------------|
-| Custom activation: `x * sigmoid(x)` (SiLU/Swish) | Exists in PyTorch, but what about a *new* activation you invented? |
-| Fused bias + activation + residual add | Separate element-wise kernels create intermediates and extra memory traffic. |
-| Custom attention mask | Standard softmax exists; your sparse mask pattern doesn't. |
-| Preprocessing on GPU | Decode JPEG → normalise → augment, all without leaving VRAM. |
 
 > **Rule:** Use library kernels when they exist. Write your own when:
 > (a) the operation doesn't exist, or
@@ -324,11 +322,11 @@ Benefits:
 > The speedup is **not automatically “3×”**: measure it. Normalisation and softmax
 > also need reductions, so they are not a simple one-pass element-wise chain.
 
-*To write a fused kernel, we first need a way to **think** about parallel work: Part III.*
+*To write a fused kernel, we first need a way to **think** about parallel work.
 
 ---
 
-<!-- _class: lead -->
+
 
 # Part III
 # Foundations: Thinking in Data-Parallel Terms
@@ -345,6 +343,8 @@ A 1080p frame has about **2 million pixels**, redrawn 60 times a second.
 - No pixel needs another pixel's answer → all can be computed **at the same time**.
 - So the hardware has thousands of simple arithmetic units that switch to other work while waiting for memory.
 
+---
+
 | Year | Step |
 |:-:|---|
 | 2001 | Programmable shaders (GeForce 3), after fixed-function cards |
@@ -354,7 +354,6 @@ A 1080p frame has about **2 million pixels**, redrawn 60 times a second.
 
 > A neural-network layer has the same shape: **one small computation on millions of independent numbers.**
 
-<style scoped>table { font-size: 18px; }</style>
 
 ---
 
@@ -528,34 +527,51 @@ kernel(a, b, c):
 
 > Each term returns with code later. Come back here if a word feels fuzzy.
 
-<style scoped>table { font-size: 18px; }</style>
+
 
 ---
 
-## Quick Check (no slides open)
+## Q1 — Maps, Reduces, Scans
 
-1. Which of these are **maps**? (a) ReLU on a tensor (b) the sum of a tensor (c) adding a bias (d) a running total.
-2. `x = a + b; y = c * d; z = x + y`. Which two statements can run at the same time?
-3. A tree reduction sums 1,024 numbers. How many rounds does it need?
-4. You launch a kernel over only 100 elements. Why is the GPU a poor fit?
-5. Why is "one thread per element" **not** the same as "launch exactly `N` threads"? *(hint: threads come in blocks)*
+> Which of these are **maps**? (a) ReLU on a tensor (b) the sum of a tensor (c) adding a bias (d) a running total.
+
+**Answer: (a) and (c).** The sum is a reduce, the running total is a scan.
 
 ---
 
-## Quick Check: Answers
+## Q2 — Independent Statements
 
-1. **(a) and (c).** The sum is a reduce, the running total is a scan.
-2. **`x` and `y`**: they share no inputs. `z` waits for both.
-3. **10 rounds**, since `2^10 = 1024`. (A single thread would need 1,023 dependent additions.)
-4. Too little parallel work: most SMs stay idle, and launch and transfer overhead dominate.
-5. Threads are launched in whole **blocks**, so the launch can contain more threads than elements.
-   The extra threads must be stopped by a **bounds check**: Part IV, Examples 2 and 3.
+> `x = a + b; y = c * d; z = x + y`. Which two statements can run at the same time?
+
+**Answer: `x` and `y`** — they share no inputs. `z` waits for both.
 
 ---
 
-<!-- _class: lead -->
+## Q3 — Tree Reduction Depth
 
-# Part IV
+> A tree reduction sums 1,024 numbers. How many rounds does it need?
+
+**Answer: 10 rounds**, since `2^10 = 1024`. (A single thread would need 1,023 dependent additions.)
+
+---
+
+## Q4 — Too Little Parallel Work
+
+> You launch a kernel over only 100 elements. Why is the GPU a poor fit?
+
+**Answer:** Too little parallel work — most SMs stay idle, and launch and transfer overhead dominate.
+
+---
+
+## Q5 — One Thread per Element ≠ N Threads
+
+> Why is "one thread per element" **not** the same as "launch exactly `N` threads"?
+
+**Answer:** Threads are launched in whole **blocks**, so the launch can contain more threads than elements. The extra threads must be stopped by a **bounds check** (Part IV, Examples 2 and 3).
+
+
+---
+
 # The CUDA Programming Model, with Worked Examples
 
 *The rules of CUDA, each one followed by a small C/C++ program you can run.*
@@ -723,25 +739,7 @@ On Colab (Runtime → Change runtime type → **T4 GPU**):
 
 ---
 
-## Concepts, Then Worked Examples
 
-From here on, each concept slide is followed by a **worked example** in CUDA C/C++.
-Every example has the same four slides:
-**Problem** → **Step by step** (worked numbers: do it on paper first) → **Full code** → **Expected output**.
-
-| # | Example | Concept it teaches |
-|:-:|---|---|
-| 1 | Hello, threads | The core index formula |
-| 2 | Vector add, N = 10 | Memory: allocate → copy → launch → copy back → free |
-| 3 | The missing bounds check | Why `if (i < n)` is not optional |
-| 4 | Launch configuration | `blocks = ceil(N / threads)`, hardware limits |
-| 5 | Error checking | `CUDA_CHECK`, `cudaGetLastError` |
-| 6 | A 5 × 7 matrix | 2D indexing |
-| 7 | Grid-stride loop | One fixed grid for any `N` |
-
-> Habit to build: **predict the output on paper, then run the program.**
-
----
 
 ## Thread Indexing: The Core Formula
 
@@ -768,11 +766,12 @@ i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x          # Numba CUDA (
 
 ---
 
-## Example 1 · Problem: "Who am I?"
+## Example 1 ·  "Who am I?"
 
-**Problem.** Launch 12 threads. Make every thread work out its own unique number, 0 to 11.
+Launch 12 threads. Make every thread work out its own unique number, 0 to 11.
 
-Why this matters: all threads run **the same code**. The only way to give thread 7 different work from thread 3 is for each thread to compute *where it is* and act on that.
+- All threads run **the same code**. 
+  - The only way to give thread 7 different work from thread 3 is for each thread to compute *where it is* and act on that.
 
 ```text
 blockDim.x = 4 threads in every block        gridDim.x = 3 blocks
@@ -781,7 +780,7 @@ blockDim.x = 4 threads in every block        gridDim.x = 3 blocks
           ┌──┬──┬──┬──┐     ┌──┬──┬──┬──┐     ┌──┬──┬──┬──┐
 threadIdx │ 0│ 1│ 2│ 3│     │ 0│ 1│ 2│ 3│     │ 0│ 1│ 2│ 3│     ← the hardware gives you this
           └──┴──┴──┴──┘     └──┴──┴──┴──┘     └──┴──┴──┴──┘
-global i     0  1  2  3        4  5  6  7        8  9 10 11       ← we want to compute this
+global i   0  1  2  3        4  5  6  7        8  9 10 11       ← we want to compute this
 ```
 
 > The hardware tells each thread its block number and its position **inside the block**.
@@ -789,26 +788,6 @@ global i     0  1  2  3        4  5  6  7        8  9 10 11       ← we want to
 
 ---
 
-## Example 1 · Step by step
-
-**Launch:** `hello_indices<<<3, 4>>>()` → `gridDim.x = 3`, `blockDim.x = 4`.
-
-1. Thread asks: *how many threads sit in the blocks before mine?* → `blockIdx.x * blockDim.x`
-   (block 2 has 2 full blocks before it: `2 * 4 = 8` threads)
-2. Thread adds *my place inside my own block* → `+ threadIdx.x`
-
-**`i = blockIdx.x * blockDim.x + threadIdx.x`**
-
-| `blockIdx.x` | `blockIdx.x * blockDim.x` | `threadIdx.x` | `i` |
-|:-:|:-:|:-:|:-:|
-| 0 | `0 * 4 = 0` | 0, 1, 2, 3 | **0, 1, 2, 3** |
-| 1 | `1 * 4 = 4` | 0, 1, 2, 3 | **4, 5, 6, 7** |
-| 2 | `2 * 4 = 8` | 0, 1, 2, 3 | **8, 9, 10, 11** |
-
-> **Check:** the last thread is block 2, thread 3 → `2*4 + 3 = 11 = gridDim.x * blockDim.x - 1`.
-> Every number 0…11 appears exactly once: no gaps, no duplicates.
-
----
 
 ## Example 1 · Full code
 
@@ -864,9 +843,30 @@ block 2, thread 3  ->  i = 2 * 4 + 3 = 11
 
 ---
 
-## Example 2 · Problem: add two vectors
+## Example 1 · Step by step
 
-**Problem.** Given `a = [0, 1, 2, …, 9]` and `b = [0, 10, 20, …, 90]`, compute `c[i] = a[i] + b[i]` **on the GPU** and print `c`.
+**Launch:** `hello_indices<<<3, 4>>>()` → `gridDim.x = 3`, `blockDim.x = 4`.
+
+1. Thread asks: *how many threads sit in the blocks before mine?* → `blockIdx.x * blockDim.x`
+   (block 2 has 2 full blocks before it: `2 * 4 = 8` threads)
+2. Thread adds *my place inside my own block* → `+ threadIdx.x`
+
+**`i = blockIdx.x * blockDim.x + threadIdx.x`**
+
+| `blockIdx.x` | `blockIdx.x * blockDim.x` | `threadIdx.x` | `i` |
+|:-:|:-:|:-:|:-:|
+| 0 | `0 * 4 = 0` | 0, 1, 2, 3 | **0, 1, 2, 3** |
+| 1 | `1 * 4 = 4` | 0, 1, 2, 3 | **4, 5, 6, 7** |
+| 2 | `2 * 4 = 8` | 0, 1, 2, 3 | **8, 9, 10, 11** |
+
+> **Check:** the last thread is block 2, thread 3 → `2*4 + 3 = 11 = gridDim.x * blockDim.x - 1`.
+> Every number 0…11 appears exactly once: no gaps, no duplicates.
+
+---
+
+## Example 2 · add two vectors
+
+Given `a = [0, 1, 2, …, 9]` and `b = [0, 10, 20, …, 90]`, compute `c[i] = a[i] + b[i]` **on the GPU** and print `c`.
 
 Two things make this harder than "hello":
 
@@ -883,8 +883,6 @@ element  :   0  1  2  3 |  4  5  6  7 |  8  9  –  –      ( – = nothing to 
 ---
 
 ## Example 2 · Step by step (1/2): the data
-
-<style scoped>table { font-size: 18px; } blockquote { margin-top: 8px; }</style>
 
 Convention: `h_` = **host** pointer (CPU memory), `d_` = **device** pointer (GPU memory).
 
@@ -1033,9 +1031,9 @@ Why? Grid size is rounded up:
 
 ---
 
-## Example 3 · Problem: what if I skip the bounds check?
+## Example 3 · what if I skip the bounds check?
 
-**Problem.** Fill `out[i] = i` for `n = 10` elements, launching `3 × 4 = 12` threads.
+Fill `out[i] = i` for `n = 10` elements, launching `3 × 4 = 12` threads.
 What do threads 10 and 11 do if nothing stops them?
 
 - C and CUDA do **not** check array bounds. There is no exception. The write simply happens.
@@ -1165,9 +1163,9 @@ my_kernel<<<blocks, threads>>>(d_a, d_b, d_c, N);
 
 ---
 
-## Example 4 · Problem: how many blocks and threads?
+## Example 4 · how many blocks and threads?
 
-**Problem.** You have `N` elements. Choose `threads` per block and `blocks` so that
+You have `N` elements. Choose `threads` per block and `blocks` so that
 
 1. there is **at least one thread per element** (nothing left uncomputed), and
 2. the launch is **legal** on the hardware.
@@ -1191,7 +1189,7 @@ Questions this example answers:
 3. **Launched = `blocks * threads`**; idle = launched − `N` (always `< threads`).
 4. **Keep `if (i < n)`** for the idle threads.
 
-<style scoped>table { font-size: 18px; }</style>
+
 
 | `N` | `(N + 255) / 256` | `blocks` | launched | idle |
 |---:|:-:|--:|--:|--:|
@@ -1311,7 +1309,7 @@ int main() {
 
 ## Example 4 · Expected output
 
-<style scoped>pre { font-size: 15px; }</style>
+
 
 ```text
 Part A: blocks = ceil(N / 256)
@@ -1343,9 +1341,9 @@ floor division: blocks = 3906, launched threads = 999936, wrong = 64
 
 ---
 
-## Example 5 · Problem: CUDA fails quietly
+## Example 5 · CUDA fails quietly
 
-**Problem.** A CUDA program can go wrong and still print *something*. Kernel launches return nothing, and a crash inside a kernel is reported **later**, by a different call. How do we find the bug, and the line that caused it?
+A CUDA program can go wrong and still print *something*. Kernel launches return nothing, and a crash inside a kernel is reported **later**, by a different call. How do we find the bug, and the line that caused it?
 
 Three kinds of failure, three different places to look:
 
@@ -1498,9 +1496,9 @@ kernel<<<blocks, threads>>>(...);
 
 ---
 
-## Example 6 · Problem: a 5 × 7 matrix
+## Example 6 · a 5 × 7 matrix
 
-**Problem.** Fill a matrix with `out[row][col] = 10 * row + col` using **one thread per element**.
+Fill a matrix with `out[row][col] = 10 * row + col` using **one thread per element**.
 
 - A matrix lives in memory as **one flat array**, row after row (*row-major*).
   Element `(row, col)` is at position **`row * n_cols + col`**.
@@ -1664,9 +1662,9 @@ for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += stride)
 
 ---
 
-## Example 7 · Problem: one grid, any N
+## Example 7 · one grid, any N
 
-**Problem.** So far the launch size depended on `N` (`blocks = ceil(N / threads)`).
+So far the launch size depended on `N` (`blocks = ceil(N / threads)`).
 Can we launch a **fixed** number of threads and still process **any** array length?
 
 Idea: each thread handles **several** elements, jumping ahead by the **total number of threads** each time.
@@ -1927,9 +1925,6 @@ Rules:
 
 ---
 
-<!-- _class: lead -->
-
-# Part V
 # The Same Kernels in Python: Numba CUDA
 
 *Everything from Part IV, now written in Python, plus how to move data efficiently.*
@@ -2265,9 +2260,7 @@ result = c_d.copy_to_host()            # safe to read
 
 ---
 
-<!-- _class: lead -->
 
-# Part VI
 # AI Kernels: From ReLU to Attention
 
 *From toy arrays to the operations inside a neural network.*
@@ -2380,9 +2373,6 @@ attention_scores[blocks, threads](Q, K, scores)
 
 ---
 
-<!-- _class: lead -->
-
-# Part VII
 # Performance: When Your Kernel Wins (and Loses)
 
 *Correct first. Now: is it fast, and if not, why not?*
@@ -2472,9 +2462,6 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 ---
 
-<!-- _class: lead -->
-
-# Part VIII
 # Wrap-Up and Lab
 
 *What to remember, and what to do next.*
@@ -2563,22 +2550,6 @@ elapsed = cuda.event_elapsed_time(start, end) / 10  # ms per call
 
 **Bonus:** Implement a 2D kernel for matrix transpose. Compare against `cp.transpose`.
 
-<!--
-Instructor pre-class checklist:
-
-- [ ] Verify Numba CUDA works on Colab:
-  ```python
-  from numba import cuda
-  print(cuda.is_available())  # True
-  ```
-- [ ] Run the 5 Numba scripts and `06_indexing_numba.py` on Colab T4, record timings
-- [ ] Compile and run the seven `cuda_c/*.cu` programs on Colab (`nvcc`); compare with the expected-output slides
-  (Example 1 line order and Example 4 Part B values depend on the GPU; Example 5 message wording on the CUDA version)
-- [ ] Prepare the Colab notebook with cells pre-written (students fill in kernels)
-- [ ] Test `cuda.event_elapsed_time` for timing (more reliable than perf_counter)
-- [ ] Have a CPU fallback ready in case Colab GPU quota is exhausted
--->
-
 ---
 
 ## Before Next Week
@@ -2605,11 +2576,26 @@ Local copies are in `img/`; full credits are in `img/CREDITS.md`.
 
 ---
 
-<!-- _class: lead -->
-<!-- _paginate: false -->
+
 
 # Thank You
 
 ### Next week: CUDA Memory Hierarchy & Profiling (Week 9)
 
 *YZM 513 – İstanbul Medeniyet Üniversitesi – Fall 2026*
+
+<!--
+pre-class checklist:
+
+- [ ] Verify Numba CUDA works on Colab:
+  ```python
+  from numba import cuda
+  print(cuda.is_available())  # True
+  ```
+- [ ] Run the 5 Numba scripts and `06_indexing_numba.py` on Colab T4, record timings
+- [ ] Compile and run the seven `cuda_c/*.cu` programs on Colab (`nvcc`); compare with the expected-output slides
+  (Example 1 line order and Example 4 Part B values depend on the GPU; Example 5 message wording on the CUDA version)
+- [ ] Prepare the Colab notebook with cells pre-written (students fill in kernels)
+- [ ] Test `cuda.event_elapsed_time` for timing (more reliable than perf_counter)
+- [ ] Have a CPU fallback ready in case Colab GPU quota is exhausted
+-->
