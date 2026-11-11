@@ -65,7 +65,6 @@ because almost every idea from those weeks comes back today.
 ---
 
 ## One Loop, Six Ways: ReLU Through the Course
-Here are the six slides with the numbering removed from the titles:
 
 ---
 
@@ -246,8 +245,6 @@ $$S(N) = \frac{1}{(1 - P) + P / N}$$
 > CuPy already runs kernels for you. Why write your own?
 
 ---
-
-> CuPy already runs kernels for you. Why write your own?
 
 -  **Custom operations**
    -  A new activation or fused residual operation not available as one library call
