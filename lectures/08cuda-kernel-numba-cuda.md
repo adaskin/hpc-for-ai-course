@@ -2552,6 +2552,176 @@ Local copies are in `img/`; full credits are in `img/CREDITS.md`.
 
 ---
 
+# Appendix
+# Beyond NVIDIA: AMD and Other Accelerators
+
+### Same parallelism questions, different hardware and APIs
+
+---
+
+## Why We Teach CUDA First
+
+This course uses NVIDIA CUDA / Numba CUDA because:
+
+- Colab gives us a free NVIDIA T4 GPU.
+- CUDA has the most mature teaching and debugging ecosystem.
+- PyTorch, CuPy, cuBLAS, cuDNN, NCCL are widely used in AI.
+- Most GPU-kernel papers and tutorials assume CUDA terminology.
+
+But the **concepts are not NVIDIA-only**:
+
+| Course concept | General idea |
+|---|---|
+| Grid / blocks / threads | Decompose parallel work |
+| Warps / SIMT | Execute many lanes together |
+| Shared memory | Fast scratchpad for cooperating threads |
+| Coalescing | Make neighbouring threads access neighbouring data |
+| Kernel fusion | Reduce memory traffic |
+| Synchronisation | Control who waits for whom |
+
+> We learn CUDA because it is concrete. The ideas transfer.
+
+---
+
+## NVIDIA vs AMD: Same Idea, Different Names
+
+| Concept | NVIDIA CUDA | AMD ROCm / HIP |
+|---|---|---|
+| GPU compute unit | SM: Streaming Multiprocessor | CU / WGP: Compute Unit / Workgroup Processor |
+| Thread group | Warp = 32 threads | Wavefront = often 64 on CDNA, 32 or 64 on RDNA |
+| Thread block | Block | Workgroup |
+| Fast block memory | Shared memory | LDS: Local Data Share |
+| Math library | cuBLAS | rocBLAS / hipBLAS |
+| DNN library | cuDNN | MIOpen |
+| Multi-GPU collectives | NCCL | RCCL |
+| Profiler | Nsight Systems / Compute | rocprof / Omniperf |
+
+> Important: do **not** hard-code “warp size = 32” in portable GPU code.
+> NVIDIA warps are 32; AMD wavefronts may be 64.
+
+---
+
+## AMD ROCm / HIP in One Slide
+
+**ROCm** = AMD's GPU computing stack.  
+**HIP** = AMD's CUDA-like C++ programming interface.
+
+| CUDA | HIP |
+|---|---|
+| `cudaMalloc` | `hipMalloc` |
+| `cudaMemcpy` | `hipMemcpy` |
+| `cudaDeviceSynchronize` | `hipDeviceSynchronize` |
+| `cudaFree` | `hipFree` |
+| `__global__` kernel | `__global__` kernel |
+| `blockIdx.x`, `threadIdx.x` | same names |
+| `kernel<<<blocks, threads>>>` | supported by HIP / `hipcc` |
+
+AMD hardware families:
+- **Instinct / CDNA**: datacentre HPC/AI GPUs (MI-series).
+- **Radeon / RDNA**: consumer / graphics GPUs; ROCm support varies.
+
+> PyTorch has ROCm builds. If you understand CUDA kernels,
+> HIP kernels will look familiar — but performance tuning still changes.
+
+---
+
+## Tiny HIP Kernel: Almost the Same Program
+
+```cpp
+__global__ void vector_add(const float *a, const float *b,
+                           float *c, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        c[i] = a[i] + b[i];
+    }
+}
+```
+
+Host side, on a ROCm machine:
+
+```cpp
+hipMalloc(&d_a, bytes);
+hipMemcpy(d_a, h_a, bytes, hipMemcpyHostToDevice);
+
+vector_add<<<blocks, threads>>>(d_a, d_b, d_c, n);
+
+hipDeviceSynchronize();
+hipMemcpy(h_c, d_c, bytes, hipMemcpyDeviceToHost);
+hipFree(d_a);
+```
+
+Compile:
+
+```bash
+hipcc vector_add.hip -o vector_add
+```
+
+> The code looks almost identical.
+> The mental model is identical.
+> The hardware details and tuning are different.
+
+---
+
+## Other AI Accelerators You Will Meet
+
+| Hardware | Software stack | How you usually access it |
+|---|---|---|
+| NVIDIA GPU | CUDA, cuBLAS, cuDNN, NCCL | PyTorch, CuPy, Numba CUDA, Triton |
+| AMD GPU | ROCm, HIP, rocBLAS, RCCL | PyTorch ROCm, HIP, Triton backend |
+| Intel GPU | oneAPI, SYCL, oneMKL, oneDNN | PyTorch XPU, SYCL, IPEX |
+| Intel Gaudi | SynapseAI | PyTorch / Habana plugins |
+| Google TPU | XLA | JAX, TensorFlow, PyTorch/XLA |
+| AWS Trainium / Inferentia | Neuron SDK | PyTorch Neuron, JAX paths |
+| Apple GPU | Metal / MPS | PyTorch MPS backend |
+
+> Some are GPUs, some are AI accelerators.
+> They do not all use CUDA.
+> But all must answer: split, assign, move, wait.
+
+---
+
+## Portability Ladder for AI Engineers
+
+| Level | What you write | Portability | Control |
+|---|---|---:|---:|
+| Framework ops | `torch.matmul`, `F.relu`, `cp.maximum` | High | Low |
+| Compiler-generated kernels | `torch.compile`, Triton | Medium / growing | Medium |
+| Portable kernel languages | HIP, SYCL, Kokkos, RAJA | Medium | High |
+| Vendor-native kernels | CUDA C++, ROCm HIP, Metal | Low | Highest |
+
+For this course:
+- **Week 6:** framework / array level (CuPy)
+- **Week 8:** explicit kernels (Numba CUDA)
+- **Week 9:** memory hierarchy and optimisation
+- **Week 13:** compiler-generated kernels (`torch.compile`)
+
+> Learn the concepts once. APIs change; memory and parallelism remain.
+
+---
+
+## What Changes on Non-NVIDIA Hardware?
+
+The questions stay the same:
+
+| Question | NVIDIA answer | AMD / other answer |
+|---|---|---|
+| Split | Grid / blocks / threads | Workgroups / wavefronts / lanes |
+| Assign | Blocks scheduled to SMs | Workgroups scheduled to CUs / engines |
+| Move | Host ↔ VRAM, shared memory | Host ↔ VRAM, LDS / local memory |
+| Wait | `cuda.synchronize`, `__syncthreads` | HIP / SYCL / framework equivalents |
+
+What changes:
+- names and APIs
+- warp / wavefront size
+- memory hierarchy details
+- library availability
+- profiler tools
+- which PyTorch backend you use
+
+> A good AI engineer asks the hardware questions first,
+> then learns the API.
+
+---
 
 
 # Thank You
@@ -2560,18 +2730,3 @@ Local copies are in `img/`; full credits are in `img/CREDITS.md`.
 
 *YZM 513 – İstanbul Medeniyet Üniversitesi – Fall 2026*
 
-<!--
-pre-class checklist:
-
-- [ ] Verify Numba CUDA works on Colab:
-  ```python
-  from numba import cuda
-  print(cuda.is_available())  # True
-  ```
-- [ ] Run the 5 Numba scripts and `06_indexing_numba.py` on Colab T4, record timings
-- [ ] Compile and run the seven `cuda_c/*.cu` programs on Colab (`nvcc`); compare with the expected-output slides
-  (Example 1 line order and Example 4 Part B values depend on the GPU; Example 5 message wording on the CUDA version)
-- [ ] Prepare the Colab notebook with cells pre-written (students fill in kernels)
-- [ ] Test `cuda.event_elapsed_time` for timing (more reliable than perf_counter)
-- [ ] Have a CPU fallback ready in case Colab GPU quota is exhausted
--->
