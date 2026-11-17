@@ -48,6 +48,89 @@ Ammar Daşkın
 
 ---
 
+# Review: kernel function
+
+Kernel function: a gpu function meant to be called by the CPU code.
+- kernels cannot explicitly return values
+  - all results must be written to an array passed to the function
+  - kernels explicitly declare their thread hierarchy when called
+    -  the number of blocks
+    -  the number of threads per block
+    -  the kernel can be called multiple times with different block or grid sizes
+  
+[https://nvidia.github.io/numba-cuda/user/kernels.html](https://nvidia.github.io/numba-cuda/user/kernels.html)
+
+---
+
+## Thread positioning in kernel function
+- When running a kernel, the kernel function’s code is executed by every thread once. 
+
+```python
+# manual positioning
+@cuda.jit
+def increment_by_one(an_array):
+    # Thread id in a 1D block
+    tx = cuda.threadIdx.x
+    # Block id in a 1D grid
+    ty = cuda.blockIdx.x
+    # Block width, i.e. number of threads per block
+    bw = cuda.blockDim.x
+    # Compute flattened index inside the array
+    pos = tx + ty * bw
+    if pos < an_array.size:  # Check array boundaries
+        an_array[pos] += 1
+```
+
+---
+
+- `numba.cuda.grid(ndim)` returns absolute position of the current thread in the entire grid blocks
+- `numba.cuda.gridsize(ndim)` returns the absolute size (or shape) in threads of the entire grid of blocks
+  
+```python
+#1D array
+@cuda.jit
+def increment_by_one(an_array):
+    pos = cuda.grid(1)
+    if pos < an_array.size:
+        an_array[pos] += 1
+#2D array
+@cuda.jit
+def increment_a_2D_array(an_array):
+    x, y = cuda.grid(2)
+    if x < an_array.shape[0] and y < an_array.shape[1]:
+       an_array[x, y] += 1
+```
+---
+
+# Review: Memory Management
+
+```python
+#an empty device array
+numba.cuda.device_array(shape,dtype=np.float64,strides=None,order='C',stream=0,)
+#from an array
+numba.cuda.device_array_like(ary, stream=0)
+# from numpy array
+numba.cuda.to_device(obj, stream=0, copy=True, to=None)
+```
+
+[https://nvidia.github.io/numba-cuda/user/memory.html](https://nvidia.github.io/numba-cuda/user/memory.html)
+
+---
+```python
+ary = np.arange(10)
+d_ary = cuda.to_device(ary)
+# to a stream
+stream = cuda.stream()
+d_ary = cuda.to_device(ary, stream=stream)
+
+#device to host
+hary = d_ary.copy_to_host()
+#host to device
+ary = np.empty(shape=d_ary.shape, dtype=d_ary.dtype)
+d_ary.copy_to_host(ary)
+```
+---
+
 <!-- _footer: "Schedule note: original syllabus Week 8 topic, taught in Week 9." -->
 
 ## Where we are
@@ -93,6 +176,75 @@ Week 13    deployment                 torch.compile
 ---
 
 <!-- _class: lead -->
+
+# Hardware Review: How the GPU actually executes your grid
+
+---
+
+## From Python grid to physical silicon
+
+When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierarchy onto physical units:
+
+| Software (Your Code) | Hardware (The GPU) | Key Rule |
+|---|---|---|
+| **Grid** | Entire GPU | Blocks run in any order; no grid-wide sync |
+| **Thread Block** | **Streaming Multiprocessor (SM)** | Assigned to **one SM** until finished |
+| **Warp** (32 threads) | Warp Scheduler + Execution Cores | Executes in lockstep (**SIMT**) |
+| **Thread** | CUDA Core / FP32 ALU | Has private registers |
+
+*(A T4 GPU has **40 SMs**; an A100 has **108 SMs**.)*
+
+---
+
+## Inside a Streaming Multiprocessor (SM)
+
+Every SM is an independent mini-processor with its own compute units and **on-chip memory**:
+
+```text
+┌───────────────────────────────────────────────────────┐
+│ Streaming Multiprocessor (SM)                         │
+│                                                       │
+│  [ Warp Schedulers ]   [ CUDA Cores (FP32 / INT32) ]  │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │ Register File (65,536 × 32-bit regs on T4)      │  │
+│  └─────────────────────────────────────────────────┘  │
+│  ┌────────────────────────┬────────────────────────┐  │
+│  │ Shared Memory (SRAM)   │ L1 Data Cache (SRAM)   │  │
+│  │ (User-managed)         │ (Hardware-managed)     │  │
+│  └────────────────────────┴────────────────────────┘  │
+└───────────────────────────▲───────────────────────────┘
+                            │  Slow (~400–800 cycles)
+                   [ L2 Cache & VRAM ]
+```
+
+- **Unified SRAM:** Shared memory and L1 cache live on the **exact same physical silicon** (64 KB–128 KB per SM).
+- **Isolation:** Thread blocks on the same SM **cannot** see each other's shared memory or registers.
+
+---
+
+## The Warp: the true unit of execution
+
+- The SM does **not** schedule individual threads; it schedules **warps** (groups of **32 consecutive threads**).
+- **Memory consequences:** Whenever a warp executes a load instruction, all 32 lanes issue their memory requests **together**.
+  - *Global memory:* 32 requests are merged into cache lines (**coalescing**, Part III).
+  - *Shared memory:* 32 requests hit 32 memory modules simultaneously (**banks**, Part IV).
+- **Latency hiding:** When Warp A stalls waiting on slow VRAM (~500 cycles), the SM switches to Warp B in **0 cycles**—if enough warps are resident (**occupancy**, Part VI).
+
+---
+
+## Why hardware matters today
+
+1. **Compute is cheap, memory is far:** An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
+2. **Blocks stay put:** Because a block lives on **one SM**, its threads can share the SM's fast on-chip SRAM.
+3. **32 is the magic number:** Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
+
+Keep these three numbers in mind as we start counting bytes.
+
+---
+
+<!-- _class: lead -->
+
 
 # Part I
 # Diagnosis: count the bytes
@@ -150,6 +302,84 @@ The accesses themselves are coalesced (Part III); the problem here is **no reuse
 ---
 
 ![w:900](img/w09-reuse.svg)
+
+---
+
+## Example: 4×4 matmul with 2×2 tiles
+
+Suppose we compute \(C = A \times B\) for \(N = 4\), using **2×2 thread blocks** (\(T = 2\)).
+To compute the top-left 2×2 tile of \(C\) (`C[0:2, 0:2]`):
+
+```text
+      A (4×4)                    B (4×4)                    C (4×4)
+┌─────────┬─────────┐      ┌─────────┬─────────┐      ┌─────────┬─────────┐
+│ Tile A0 │ Tile A1 │      │ Tile B0 │   ...   │      │ Block 0 │         │
+├─────────┼─────────┤  ×   ├─────────┼─────────┤  =   ├─────────┼─────────┤
+│   ...   │   ...   │      │ Tile B1 │   ...   │      │         │         │
+└─────────┴─────────┘      └─────────┴─────────┘      └─────────┴─────────┘
+```
+
+**Step 1 (Phase 0):** The 4 threads in `Block 0` cooperate to load `Tile A0` and `Tile B0` (8 floats total) from VRAM into shared memory.
+- Each thread computes its partial dot product from shared memory (using each loaded float **2 times**).
+
+**Step 2 (Phase 1):** Synchronize, overwrite shared memory with `Tile A1` and `Tile B1` (8 floats), and add the second partial dot product.
+
+---
+
+Let's trace **Block (0, 0)** (4 threads) computing the top-left 2×2 output `C[0:2, 0:2]`:
+
+```text
+         A (4×4)                       B (4×4)                     C (4×4)
+┌───────────┬───────────┐     ┌───────────┬───────────┐     ┌───────────┬───────────┐
+│  1    2   │  3    4   │     │  2    0   │  ·    ·   │     │ C00  C01  │  ·    ·   │
+│  5    6   │  7    8   │     │  1    3   │  ·    ·   │     │ C10  C11  │  ·    ·   │
+├───────────┼───────────┤  ×  ├───────────┼───────────┤  =  ├───────────┼───────────┤
+│  ·    ·   │  ·    ·   │     │  4    1   │  ·    ·   │     │  ·    ·   │  ·    ·   │
+│  ·    ·   │  ·    ·   │     │  0    2   │  ·    ·   │     │  ·    ·   │  ·    ·   │
+└───────────┴───────────┘     └───────────┴───────────┘     └───────────┴───────────┘
+   Tile A0     Tile A1           Tile B0/B1                       Block (0,0)
+```
+
+Instead of each thread reading a full row and column from VRAM, the 4 threads march across A and down B **one 2×2 tile at a time**.
+
+---
+
+## Numerical walkthrough: Phase 0 & Phase 1
+
+**Phase 0:** Each thread loads **1 element** of `Tile A0` and **1 element** of `Tile B0` into shared memory (`sA`, `sB`), then calls `cuda.syncthreads()`:
+
+```text
+sA = [ 1  2 ]      sB = [ 2  0 ]      Partial sums (from fast SRAM):
+     [ 5  6 ]           [ 1  3 ]      • Thread (0,0): 1·2 + 2·1 = 4
+                                      • Thread (0,1): 1·0 + 2·3 = 6
+                                      • Thread (1,0): 5·2 + 6·1 = 16
+                                      • Thread (1,1): 5·0 + 6·3 = 18
+```
+*(Notice: every number in `sA` and `sB` was fetched from VRAM **once**, but used by **2 threads**.)*
+
+**Phase 1:** Synchronize, overwrite `sA` and `sB` with `Tile A1` and `Tile B1`, and accumulate:
+
+```text
+sA = [ 3  4 ]      sB = [ 4  1 ]      Final sums (partial + new):
+     [ 7  8 ]           [ 0  2 ]      • Thread (0,0): 4  + (3·4 + 4·0) = 16
+                                      • Thread (0,1): 6  + (3·1 + 4·2) = 17
+                                      • Thread (1,0): 16 + (7·4 + 8·0) = 44
+                                      • Thread (1,1): 18 + (7·1 + 8·2) = 41
+```
+
+---
+
+## Counting the savings on this 4×4 example
+
+Compare how many global memory reads **Block (0, 0)** performs to compute its 4 outputs:
+
+| Approach | Reads per thread | Total VRAM reads for Block (0,0) | Reuse per float |
+|---|---:|---:|---:|
+| **Naive** (Week 8) | 4 from A + 4 from B = **8** | 4 threads × 8 = **32 floats** | **1×** (no reuse) |
+| **Tiled ($T=2$)** | Loads 1 of A + 1 of B per phase | 2 phases × 8 = **16 floats** | **2×** ($T$ times) |
+
+- **Scaling up:** A tile of size $T \times T$ cuts global VRAM traffic by **$T\times$**.
+- For $N = 1024$ with $T = 16$, global reads drop from **8.59 GB** to **0.54 GB** — shrinking the memory bottleneck from **26.8 ms** down to **1.7 ms**.
 
 ---
 
@@ -252,25 +482,37 @@ Scope is not a detail. It decides what can cooperate with what.
 
 ---
 
-## The trap: "local memory" is not fast
+---
 
-- Local memory is **per-thread**, but it lives in **VRAM**.
-- It appears when the compiler spills registers, or when you index a
-  per-thread array with a non-constant index.
-- Same latency as global memory. The name misleads.
+## The trap: "local" means scope, not location
 
-Check it: `kernel_resources()` in `gpu_utils.py` prints spill bytes per thread.
+In CUDA, **"local"** describes *who can see it* (private to one thread), **not** *where it sits on the chip*:
+
+- **Registers (fast, ~1 cycle):** On-chip per-thread memory. Used for normal variables (`acc = 0.0`).
+- **Local Memory (slow, ~400 cycles):** Off-chip **VRAM** reserved privately for one thread.
+
+**When does slow local memory happen?**
+1. **Register spilling:** Your thread uses too many variables, so excess registers overflow into VRAM.
+2. **Dynamic indexing:** You create a small per-thread array (`cuda.local.array`) and index it with a variable (`arr[i]`) instead of a constant (`arr`).
+
+*Check it:* `kernel_resources()` in `gpu_utils.py` prints `spill bytes` — any number above `0` means hidden VRAM traffic.
 
 ---
 
 ## Why shared memory is worth the trouble
 
-| Path | Aggregate bandwidth on a T4 |
-|---|---|
-| global (VRAM) | ≈ 320 GB/s |
-| shared memory | 32 banks × 4 B × 1.59 GHz × 40 SMs ≈ **8 TB/s** |
+Every SM has its own fast on-chip shared memory, so bandwidth scales across all SMs in parallel:
 
-≈ **25×** faster on paper, *if* you avoid bank conflicts.
+| Memory Path | Where it lives | Aggregate Bandwidth (T4) |
+|---|---|---|
+| **Global / Local** | Off-chip VRAM | **~320 GB/s** (shared by whole GPU) |
+| **Shared Memory** | On-chip SRAM (inside each SM) | **~8,140 GB/s (~8 TB/s)** |
+
+**Where does ~8 TB/s come from?**
+- **Per SM:** 32 banks × 4 bytes/cycle × 1.59 GHz clock ≈ **203.5 GB/s**
+- **Across 40 SMs:** 203.5 GB/s × 40 SMs ≈ **8,140 GB/s**
+
+That is **~25× more bandwidth** than VRAM—*provided* threads don't stall on bank conflicts.
 
 ---
 
