@@ -67,7 +67,7 @@ Week 13    deployment                 torch.compile
 
 ---
 
-## Week 8 made five promises
+## Week 8 made six promises
 
 | Week 8 promised | Today |
 |---|---|
@@ -76,8 +76,9 @@ Week 13    deployment                 torch.compile
 | Matmul with shared-memory tiling: Week 9 | Part IV |
 | Cooperative reductions (softmax): Week 9 | Part V |
 | Occupancy: use the calculator and tune in Week 9 | Part VI |
+| `cuda.stream`: overlap transfers with compute, Week 9 | Part VIII |
 
-Today keeps all five.
+Today keeps all six.
 
 ---
 
@@ -112,9 +113,10 @@ By the end of today you can:
 | V | Reductions (softmax redeemed) | 25 |
 | VI | Occupancy | 15 |
 | VII | Profiling | 15 |
-| VIII | Lab + wrap | 10 |
+| VIII | Streams: overlap copies and compute | 15 |
+| IX | Lab + wrap | 10 |
 
-Short on time? Parts V–VI can move to self-study; the lab covers them.
+Short on time? Parts V–VI and VIII can move to self-study; the lab covers them.
 
 ---
 
@@ -1075,13 +1077,119 @@ Open the JSON in `chrome://tracing` or `ui.perfetto.dev`.
 <!-- _class: lead -->
 
 # Part VIII
+# Streams: overlapping copies and compute
+
+---
+
+## The GPU waits during copies
+
+So far every program did the same three things, one after another:
+
+```text
+upload  →  kernel  →  download
+```
+
+- During the **copy**, the SMs are idle. During the **kernel**, the copy engines are idle.
+- PCIe is ~12 GB/s (Week 6): for a light kernel, the copies can cost more than the compute.
+
+Idea: **split the data into chunks and pipeline them**, like a factory line.
+
+---
+
+![w:900](img/w09-streams.svg)
+
+---
+
+## What is a stream?
+
+A **stream** is a queue of GPU work: copies and kernel launches.
+
+- Operations in **one** stream run **in order**.
+- Operations in **different** streams **may** overlap. Nothing forces them to.
+- Everything you have launched so far went into the **default stream**.
+
+```python
+s = cuda.stream()                         # create a queue
+d_in = cuda.to_device(h_chunk, stream=s)  # async upload into s
+kernel[blocks, tpb, s](d_in, d_out)       # launch into s (third entry of the launch config)
+d_out.copy_to_host(h_out_chunk, stream=s) # async download into s
+s.synchronize()                           # wait for this stream; cuda.synchronize() waits for all
+```
+
+---
+
+## The four questions, once more
+
+| Question | With streams |
+|---|---|
+| **Split** | the array into K independent chunks |
+| **Assign** | each chunk to its own stream |
+| **Move** | async copies, in and out, queued in that stream |
+| **Wait** | `cuda.synchronize()` once, after every chunk is queued |
+
+Week 5's lesson again: *overlap communication with computation.*
+
+---
+
+## Three requirements for overlap
+
+1. **Pinned (page-locked) host memory.** `cuda.pinned_array(n, dtype)` or `with cuda.pinned(a, b):`.
+   Copies from ordinary pageable memory are staged and cannot overlap.
+2. **Asynchronous copies in a stream** (`stream=s`). A plain `to_device` waits.
+3. **Independent chunks.** Chunk *k*'s result must not be needed by chunk *k+1*.
+
+Also: the kernel needs enough work. A kernel that is 1 % of the time leaves nothing to hide.
+
+Pinned memory is a scarce resource; pin what you stream, not everything.
+
+---
+
+## Code: one stream per chunk
+
+```python
+h_in  = cuda.pinned_array(n, dtype=np.float32)   # page-locked
+h_out = cuda.pinned_array(n, dtype=np.float32)
+streams = [cuda.stream() for _ in range(K)]
+chunk = n // K
+
+for k, s in enumerate(streams):
+    lo, hi = k * chunk, (k + 1) * chunk
+    d_in  = cuda.to_device(h_in[lo:hi], stream=s)
+    d_out = cuda.device_array(chunk, dtype=np.float32, stream=s)
+    heavy[blocks, TPB, s](d_in, d_out, iters)
+    d_out.copy_to_host(h_out[lo:hi], stream=s)
+cuda.synchronize()                               # all streams
+```
+
+📁 `week09/10_streams_overlap.py`
+
+---
+
+## Run it
+
+```bash
+python 10_streams_overlap.py                  # serial vs 4 streams, verified against NumPy
+python 10_streams_overlap.py --chunks 8       # more chunks: more overlap, more launch overhead
+python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
+```
+
+- With K balanced stages the ideal speedup is **3K / (K + 2)**: 2× for K = 4. The longest stage sets the limit.
+- Predict first: what happens at `--iters 1`? At `--chunks 1`?
+- A timeline (`nsys`, Part VII) shows copies and kernels side by side.
+- **Returns as:** `pin_memory=True` + `non_blocking=True` (Week 10); DDP overlap (Weeks 11–12).
+
+---
+
+<!-- _class: lead -->
+
+# Part IX
 # Lab and wrap-up
 
 ---
 
 <!-- _footer: "Lab notebook: week09/lab_week09_memory_hierarchy.ipynb" -->
 
-## Lab: five experiments, one story
+## Lab: six experiments, one story
 
 | # | task | file |
 |---|---|---|
@@ -1090,6 +1198,7 @@ Open the JSON in `chrome://tracing` or `ui.perfetto.dev`.
 | 3 | remove each barrier, 3 runs each | `04 --race` |
 | 4 | transpose: padded vs unpadded | `06_bank_conflicts.py` |
 | 5 | block reduce → shared softmax; profile or measure | `07`, `08`, `09` |
+| 6 | serial vs streams; chunks and kernel length | `10_streams_overlap.py` |
 
 **Deliverable:** the results tables in the notebook, plus one paragraph per experiment.
 
@@ -1117,6 +1226,7 @@ out of 320, and ______ GFLOP/s out of 8,100."*
 | occupancy | batch-size and kernel tuning (Weeks 10–13) |
 | achieved GB/s | LLM inference: tokens/s tracks memory bandwidth (Week 13) |
 | profiler timelines | GPU idle time → DataLoader (Week 10) |
+| streams, pinned memory | `non_blocking` copies and `pin_memory` (Week 10); DDP overlap (Weeks 11–12) |
 
 ---
 
@@ -1139,6 +1249,7 @@ out of 320, and ______ GFLOP/s out of 8,100."*
    Same address across a warp is a broadcast, not a conflict.
 5. **Occupancy is a proxy**, not a goal. Sweep and measure.
 6. Time with CUDA events: warm up, then take the median of ≥ 5 runs.
+7. **Streams** overlap copies with compute, but only with pinned memory, async copies and independent chunks.
 
 ---
 
@@ -1147,7 +1258,7 @@ out of 320, and ______ GFLOP/s out of 8,100."*
 - **Finish the lab** (`lab_week09_memory_hierarchy.ipynb`) with your results tables and one paragraph per experiment.
 - **Re-run** `04_matmul_tiled.py --race` a few more times. How often does a broken kernel look correct?
 - **Read:** NVIDIA CUDA C++ Best Practices Guide, *Memory Optimizations*.
-- **Think ahead:** a profiler timeline shows gaps between kernels. What could make a GPU wait for its *input*? That is Week 10.
+- **Think ahead:** a profiler timeline shows gaps between kernels. What could make a GPU wait for its *input*? Streams hide copies; Week 10 is about the CPU side of the same problem.
 
 ---
 

@@ -1,6 +1,6 @@
 ## Week 9: the CUDA memory hierarchy and profiling
 
-Slides: `../09memory-hierarchy-and-profiling.md` (Marp). The deck follows one idea: a kernel is fast when **each byte fetched from VRAM is used many times**. Parts I–IV (counting bytes, the memory hierarchy, coalescing, shared-memory tiling) are the spine; Parts V–VII (reductions, occupancy, profiling) can move to self-study if time is short.
+Slides: `../09memory-hierarchy-and-profiling.md` (Marp). The deck follows one idea: a kernel is fast when **each byte fetched from VRAM is used many times**. Parts I–IV (counting bytes, the memory hierarchy, coalescing, shared-memory tiling) are the spine; Parts V–VIII (reductions, occupancy, profiling, streams) can move to self-study if time is short.
 
 ## Scripts
 
@@ -17,14 +17,15 @@ Each script is complete and prints its own results; every kernel is verified aga
 | `07_block_reduce.py` | V | Shared-memory tree reduction with one atomic per block vs one atomic per thread |
 | `08_softmax_shared.py` | V | Week 8's softmax redone with a cooperative reduction (one block per row) |
 | `09_profile_and_measure.py` | VII | Tries Nsight Compute, falls back to events + achieved GB/s and GFLOP/s; `--torch` adds `torch.profiler` |
+| `10_streams_overlap.py` | VIII | Serial upload → kernel → download vs K chunks in K streams with pinned memory (`cuda.stream`) |
 | `gpu_utils.py` | all | `time_ms` (CUDA-event timing), `gbs`, `gflops`, `device_report`, `kernel_resources`, `theoretical_occupancy` |
-| `make_figures.py` | all | Regenerates the nine `../img/w09-*.svg` figures (`python make_figures.py`; `--png DIR` for previews) |
+| `make_figures.py` | all | Regenerates the ten `../img/w09-*.svg` figures (`python make_figures.py`; `--png DIR` for previews) |
 
 Most scripts take a size option (`--n`, `--sizes`, `--rows`, `--log2n`); run with `--help`.
 
 ## Lab
 
-`lab_week09_memory_hierarchy.ipynb` (Colab-ready, T4): five experiments, each with a prediction, a results table and questions. It runs the scripts above, so it needs no code of its own.
+`lab_week09_memory_hierarchy.ipynb` (Colab-ready, T4): six experiments, each with a prediction, a results table and questions. It runs the scripts above, so it needs no code of its own.
 
 ## Setup
 
@@ -51,3 +52,4 @@ Ceilings used throughout are for a **T4**: 320 GB/s memory bandwidth and 8,100 G
 5. **Bank conflicts** come from stride, not from using shared memory; a broadcast (same address) is not a conflict. Padding a transpose tile to `(T, T+1)` removes the 32-way conflict.
 6. **Reductions** need cooperation: `tid < stride`, the barrier outside the `if`, padding with the identity, and one atomic per block, not per thread.
 7. **Occupancy is a proxy, not a goal.** Sweep and measure. Time with CUDA events, warm up, and report a median.
+8. **Streams** overlap copies with compute, but only with pinned host memory, asynchronous copies and independent chunks. The ideal speedup for K balanced stages is 3K / (K + 2).

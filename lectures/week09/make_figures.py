@@ -297,10 +297,42 @@ def fig_roofline():
     return fig
 
 
+def fig_streams():
+    """Serial copy -> compute -> copy vs a 4-chunk pipeline on three engines."""
+    K = 4
+    fig, ax = blank((9.2, 4.0), (0, 19), (-1.4, 8.4))
+    u = 1.05                                   # width of one time unit
+    x0 = 3.6
+    cols = {"H2D": (BLUE, BLUE_L), "kernel": (ORANGE, ORANGE_L), "D2H": (GREEN, GREEN_L)}
+
+    ax.text(x0, 7.9, "serial: upload all, compute all, download all", fontsize=10.5,
+            color=INK, weight="bold")
+    for stage, (name, (ec, fc)) in enumerate(cols.items()):
+        box(ax, x0 + stage * K * u, 6.6, K * u - 0.08, 0.9, name, fc=fc, ec=ec, fs=10, r=0.06)
+    ax.text(x0 - 0.3, 7.05, "one stream", ha="right", va="center", fontsize=10, color=INK)
+    ax.text(x0 + 3 * K * u + 0.2, 7.05, f"{3 * K} units", va="center", fontsize=10, color=GRAY)
+
+    ax.text(x0, 5.4, "4 streams: the stages of different chunks overlap",
+            fontsize=10.5, color=INK, weight="bold")
+    for lane, (name, (ec, fc)) in enumerate(cols.items()):
+        y = 3.9 - lane * 1.25
+        ax.text(x0 - 0.3, y + 0.45, "copy in" if name == "H2D" else "compute" if name == "kernel"
+                else "copy out", ha="right", va="center", fontsize=10, color=INK)
+        for k in range(K):
+            box(ax, x0 + (k + lane) * u, y, u - 0.08, 0.9, f"c{k}", fc=fc, ec=ec, fs=9.5, r=0.06)
+    ax.text(x0 + (K + 2) * u + 0.2, 1.85, f"{K + 2} units", va="center", fontsize=10, color=GRAY)
+    ax.text(9.5, -0.45, f"ideal speedup 3K / (K + 2) = {3 * K / (K + 2):.0f}x for K = {K} balanced stages;"
+            " the longest stage sets the limit", ha="center", fontsize=10, color=INK)
+    ax.text(9.5, -1.15, "needs pinned host memory, asynchronous copies and independent chunks",
+            ha="center", fontsize=10, color=GRAY)
+    return fig
+
+
 FIGS = {"w09-memory-hierarchy": fig_memory_hierarchy, "w09-coalescing": fig_coalescing,
         "w09-reuse": fig_reuse, "w09-tiling": fig_tiling, "w09-traffic": fig_traffic,
         "w09-banks": fig_banks, "w09-reduction": fig_reduction,
-        "w09-occupancy": fig_occupancy, "w09-roofline": fig_roofline}
+        "w09-occupancy": fig_occupancy, "w09-roofline": fig_roofline,
+        "w09-streams": fig_streams}
 
 if __name__ == "__main__":
     png = Path(sys.argv[sys.argv.index("--png") + 1]) if "--png" in sys.argv else None
