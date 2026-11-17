@@ -7,6 +7,7 @@
 
 Run:  python 06_bank_conflicts.py [--n 4096]
 """
+
 import argparse
 
 import numpy as np
@@ -33,7 +34,9 @@ def make_transpose(pad):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=4096, help="matrix is n x n (multiple of 32)")
+    ap.add_argument(
+        "--n", type=int, default=4096, help="matrix is n x n (multiple of 32)"
+    )
     args = ap.parse_args()
     require_gpu()
 
@@ -43,7 +46,7 @@ def main():
     dA = cuda.to_device(A)
     dOut = cuda.device_array((n, n), dtype=np.float32)
     grid, block = (n // T, n // T), (T, T)
-    bytes_moved = 2 * A.nbytes      # read A once, write the transpose once
+    bytes_moved = 2 * A.nbytes  # read A once, write the transpose once
 
     print(f"transpose {n}x{n} float32, tile {T}x{T}")
     print(f"{'version':<20}{'shared KB':>11}{'ms':>9}{'GB/s':>9}")
@@ -57,10 +60,18 @@ def main():
         shared_kb = T * (T + (1 if pad else 0)) * 4 / 1024
         print(f"{name:<20}{shared_kb:>11.2f}{ms:>9.3f}{gbs(bytes_moved, ms):>9.1f}")
 
-    print("\nBoth versions are correct; padding only changes the bank mapping of the shared read:")
-    print(f"  unpadded: bank = (tx*{T} + ty) % 32 = ty          -> 32 lanes, 1 bank    (32-way conflict)")
-    print(f"  padded:   bank = (tx*{T + 1} + ty) % 32 = (tx+ty) % 32 -> 32 lanes, 32 banks (no conflict)")
-    print("The tiled matmul does not have this problem: its inner reads are broadcasts or conflict-free.")
+    print(
+        "\nBoth versions are correct; padding only changes the bank mapping of the shared read:"
+    )
+    print(
+        f"  unpadded: bank = (tx*{T} + ty) % 32 = ty          -> 32 lanes, 1 bank    (32-way conflict)"
+    )
+    print(
+        f"  padded:   bank = (tx*{T + 1} + ty) % 32 = (tx+ty) % 32 -> 32 lanes, 32 banks (no conflict)"
+    )
+    print(
+        "The tiled matmul does not have this problem: its inner reads are broadcasts or conflict-free."
+    )
 
 
 if __name__ == "__main__":

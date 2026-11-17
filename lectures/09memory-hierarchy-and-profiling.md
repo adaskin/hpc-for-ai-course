@@ -66,57 +66,29 @@ Week 13    deployment                 torch.compile
 ```
 
 ---
-
-## Week 8 made six promises
-
-| Week 8 promised | Today |
-|---|---|
-| Shared memory: a preview, then Week 9 | Part II |
-| Coalescing: Week 9 | Part III |
-| Matmul with shared-memory tiling: Week 9 | Part IV |
-| Cooperative reductions (softmax): Week 9 | Part V |
-| Occupancy: use the calculator and tune in Week 9 | Part VI |
-| `cuda.stream`: overlap transfers with compute, Week 9 | Part VIII |
-
-Today keeps all six.
-
----
-
 ## The week in one sentence
 
 > A kernel is fast when **each byte fetched from VRAM is used many times**.
 >
 > Tiling is how you arrange that.
 > Profiling is how you prove it worked.
-
+>
 ---
 
-## Learning outcomes
-
-By the end of today you can:
-
-1. Say where your data lives, who manages it, and what it costs to reach.
-2. Predict whether a warp's access coalesces — and measure the difference.
-3. Write a **tiled matmul** and a **block reduction** in Numba CUDA, and verify them.
-4. Explain a kernel's bottleneck with a number: achieved GB/s or GFLOP/s against the hardware ceiling.
-
----
 
 ## Today's arc
 
-| Part | Content | Min |
-|---|---|:--:|
-| I | Diagnosis: count the bytes | 15 |
-| II | The memory hierarchy | 20 |
-| III | Coalescing | 20 |
-| IV | Shared memory + tiling | 35 |
-| V | Reductions (softmax redeemed) | 25 |
-| VI | Occupancy | 15 |
-| VII | Profiling | 15 |
-| VIII | Streams: overlap copies and compute | 15 |
-| IX | Lab + wrap | 10 |
-
-Short on time? Parts V–VI and VIII can move to self-study; the lab covers them.
+| Part | Content |  
+|---|---|
+| I | Diagnosis: count the bytes |
+| II | The memory hierarchy |  
+| III | Coalescing |  
+| IV | Shared memory + tiling | 
+| V | Reductions (softmax redeemed) | 
+| VI | Occupancy | 
+| VII | Profiling | 
+| VIII | Streams: overlap copies and compute | 
+| IX | Lab + wrap |
 
 ---
 
@@ -191,7 +163,7 @@ The accesses themselves are coalesced (Part III); the problem here is **no reuse
 
 The arithmetic needs **0.27 ms**. The bytes need **26.8 ms**.
 
-📁 `week09/01_traffic_accounting.py` — no GPU needed, run it now.
+📁 `week09/01_traffic_accounting.py` — no GPU needed.
 
 ---
 
@@ -200,7 +172,6 @@ The arithmetic needs **0.27 ms**. The bytes need **26.8 ms**.
 - This is a **no-reuse model**. The L1 and L2 caches catch some of the repeated reads, so the real naive kernel can be faster than 26.8 ms.
 - The *shape* of the argument is right: moving the bytes takes ~100× longer than the arithmetic, so bandwidth, not FLOPs, is the limit.
 
-Measure it (Part VII), then fix it (Part IV).
 
 ---
 
@@ -209,7 +180,7 @@ Measure it (Part VII), then fix it (Part IV).
 > Load a piece of A and a piece of B into **fast on-chip memory once**,
 > and let many threads reuse them.
 
-That is **tiling**. Everything in Part IV is bookkeeping for this idea.
+That is **tiling**. 
 
 ---
 
@@ -224,7 +195,7 @@ That is **tiling**. Everything in Part IV is bookkeeping for this idea.
 
 ---
 
-## A new rung on Week 5's cost ladder
+## A new rung on cost ladder
 
 ```text
 registers        ~1 cycle          ← the compiler manages these
@@ -278,7 +249,6 @@ Scope is not a detail. It decides what can cooperate with what.
 > Shared memory is a **user-managed cache**: you decide what to keep in it.
 > (CUDA C++ Best Practices Guide, *Shared Memory*.)
 
-That single sentence is the whole of Part IV.
 
 ---
 
@@ -300,7 +270,7 @@ Check it: `kernel_resources()` in `gpu_utils.py` prints spill bytes per thread.
 | global (VRAM) | ≈ 320 GB/s |
 | shared memory | 32 banks × 4 B × 1.59 GHz × 40 SMs ≈ **8 TB/s** |
 
-≈ **25×** faster on paper, *if* you avoid bank conflicts (Part IV).
+≈ **25×** faster on paper, *if* you avoid bank conflicts.
 
 ---
 
@@ -414,6 +384,23 @@ python 02_coalescing.py            # prints ms, achieved GB/s and % of peak for 
 
 ---
 
+
+**The prediction:** `col_sums` (coalesced) should beat `row_sums` (strided) by a clear margin.
+
+On a T4, `n = 4096`: **almost the same time.** Sometimes within 10 %.
+
+**Was the model wrong?**
+
+- The *model* describes the number of 32-byte sectors a warp requests **on a miss**.
+- Whether that miss costs bandwidth depends on the **cache**.
+
+Reads-with-reuse are the friendliest case for the memory system.
+Modern GPUs are very good at the friendly case.
+> Coalescing matters when the wasted bytes are never re-used. It doesn't matter when the cache will re-use them for you.
+
+---
+
+
 ## The same lesson, different spelling: AoS vs SoA
 
 ```python
@@ -429,6 +416,118 @@ not a list of records. Now you know why.
 
 ---
 
+## The natural C layout: Array of Structs
+
+```c
+struct Particle {
+    float x, y, z;            // 12 bytes
+};
+struct Particle particles[N];
+```
+```
+addr:   0    4    8   12   16   20   24   28  ...
+        x0   y0   z0   x1   y1   z1   x2   y2  ...
+        └────particle 0────┘└────particle 1───┘
+```
+---
+
+## The other layout: Struct of Arrays
+
+```c
+float x[N], y[N], z[N];
+```
+```
+x:   x0   x1   x2   x3   x4   x5   ...    (contiguous)
+y:   y0   y1   y2   y3   y4   y5   ...    (contiguous)
+z:   z0   z1   z2   z3   z4   z5   ...    (contiguous)
+```
+One contiguous field per array. Access is `x[i], y[i], z[i]`.
+
+> Same number of bytes. Same arithmetic. Only the layout differs.
+
+---
+
+
+## The stride between lanes
+
+Almost every GPU kernel is *"`thread-i` handles `element-i`."*
+Suppose each thread only needs the **x** field:
+
+```c
+i = cuda.grid(1)
+val[i] = particles[i].x           # AoS
+```
+Lane `i` reads address `i × 12` bytes. **Consecutive lanes are 12 bytes apart**.
+
+A warp (32 lanes) touches addresses `0, 12, 24, …, 372`:
+
+| | |
+|---|---:|
+| useful bytes (32 × 4 B) | 128 B |
+| cachelines touched | ~3 × 128 B = **384 B** |
+| bytes fetched / useful | **≈ 3×** |
+
+---
+
+## SoA: the same warp, one cacheline
+
+```c
+val[i] = x[i]                     # SoA
+```
+
+Lane `i` reads address `i × 4` bytes. **Consecutive lanes are 4 bytes apart.**
+
+Addresses `0, 4, 8, …, 124` → **one 128-byte cacheline.**
+
+| | AoS `particles[i].x` | SoA `x[i]` |
+|---|---:|---:|
+| stride between lanes | 12 B | **4 B** |
+| bytes fetched | ~384 B | **128 B** |
+| useful fraction | ~33 % | **100 %** |
+| verdict | strided ❌ | **coalesced** ✅ |
+
+This is *exactly* Part III again — the lane-to-address map, nothing else.
+
+---
+
+## When AoS is fine
+
+AoS is only wasteful when threads read **one field at a time**.
+
+If every thread genuinely needs all three fields *together*:
+
+```cuda
+v = sqrt(particles[i].x * particles[i].x
+       + particles[i].y * particles[i].y
+       + particles[i].z * particles[i].z)     # touches every byte
+```
+
+then AoS uses every byte it fetches — **no waste.**
+
+
+> SoA wins when the access pattern is **per-field**, 
+>   - which is the overwhelming case in GPU kernels, DL, and physics simulations.
+
+
+---
+## AoS vs SoA is already in your tensors
+
+
+A `(N, C, H, W)` tensor is not a list of records. It is a stack of
+**contiguous per-field** planes:
+
+```text
+channel 0:  [ ... N×H×W floats, contiguous ... ]
+channel 1:  [ ... N×H×W floats, contiguous ... ]
+...
+```
+
+The **innermost dimension is contiguous** (`W`). Every conv / matmul / LayerNorm kernel processes one feature dimension at a time — the "read one field per lane" pattern.
+
+A framework that stored images AoS-style (`[pixel: (r,g,b), …]`) would make every per-channel kernel strided. They do not. That is not an accident.
+
+---
+
 ## Week 8's convention, vindicated
 
 ```python
@@ -441,6 +540,27 @@ consecutive `threadIdx.x` then touch consecutive memory.
 **That choice was coalescing.** Swap the roles and measure the cost.
 
 ---
+
+## The unifying table
+
+
+> **The layout of data in memory and the map of threads to that memory
+> decide whether a warp's 32 lanes collapse to 1 transaction.**
+
+| Situation | Layout | Thread → element | Result |
+|---|---|---|---|
+| `col_sums` | row-major matrix | lane → consecutive columns | ✅ |
+| `row_sums` | row-major matrix | lane → consecutive rows (stride N) | ❌ |
+| **SoA** | `x[N], y[N], z[N]` | lane → `x[i]` (stride 4 B) | ✅ |
+| **AoS** | `[(x,y,z), …]` | lane → `particles[i].x` (stride 12 B) | ❌ |
+| Week 8 `col, row` | row-major | `threadIdx.x` → column | ✅ |
+| Week 8 `row, col` | row-major | `threadIdx.x` → row (stride N) | ❌ |
+
+**Two levers, one bottleneck:** change the thread map (Week 8) **or** the memory layout (AoS → SoA). Real code often pulls both.
+
+---
+
+
 
 <!-- _class: lead -->
 
@@ -651,6 +771,43 @@ A race is not a crash: it is a *nondeterministic* answer. That is what makes it 
 
 ---
 
+## Banks of a 2D shared array
+
+Shared memory is **32 banks × 4 bytes**. Word `w` lives in bank `w mod 32`.
+The hardware serves **one word per bank per cycle**.
+
+For a row-major `tile[R][C]`:
+
+$$\text{bank}(tile[r][c]) = (r \cdot C + c) \bmod 32$$
+
+The **row stride is the column count `C`**. That one number decides
+whether the row index helps or vanishes:
+
+| `C` | `C mod 32` | row index contributes? |
+|---:|---:|---|
+| 32 | 0 | **no** — bank = `c mod 32` |
+| 33 | 1 | yes — every row shifts the banks by 1 |
+| 34 | 2 | partly — only 16 distinct banks for 32 rows |
+| 31 | 31 | yes, and coprime → sweeps all 32 |
+
+---
+
+## The three cases
+
+A warp is 32 lanes. What they touch decides the cost:
+
+| Pattern across the warp | Cost |
+|---|---|
+| 32 lanes → **32 distinct banks**, different words | **1** transaction ✅ |
+| 32 lanes → **the same word** | **1** transaction (broadcast) ✅ |
+| *n* lanes → **the same bank**, *n* different words | **n** serialized transactions ❌ |
+
+Two of these are free. Only the third is a **bank conflict**.
+
+Note the middle case: reading the *same address* from every lane is a
+broadcast, not a conflict. That is what saves the matmul kernel.
+
+---
 ## Important: our matmul does *not* conflict
 
 In the inner loop, take a warp with `tx = 0..31` (T = 32, so one value of `ty`):
@@ -667,37 +824,131 @@ Let's demonstrate it there.
 
 ---
 
-## Demo: transpose with a shared tile
+## The transpose: which access is the problem
+
+Block is `(T, T) = (32, 32)` = 1024 threads. Global reads and writes
+are both coalesced. The shared-memory access is where it hurts.
 
 ```python
 T = 32
-
-def make_transpose(pad):
-    width = T + (1 if pad else 0)
-    @cuda.jit
-    def kernel(A, out):
-        tile = cuda.shared.array(shape=(T, width), dtype=float32)
-        tx, ty = cuda.threadIdx.x, cuda.threadIdx.y
-        tile[ty, tx] = A[cuda.blockIdx.y*T + ty, cuda.blockIdx.x*T + tx]
-        cuda.syncthreads()
-        out[cuda.blockIdx.x*T + ty, cuda.blockIdx.y*T + tx] = tile[tx, ty]
-    return kernel
+@cuda.jit
+def kernel(A, out):
+    tile = cuda.shared.array(shape=(T, T), dtype=float32)
+    tx, ty = cuda.threadIdx.x, cuda.threadIdx.y
+    tile[ty, tx] = A[blockIdx.y*T + ty, blockIdx.x*T + tx]   # write
+    cuda.syncthreads()
+    out[blockIdx.x*T + ty, blockIdx.y*T + tx] = tile[tx, ty]  # READ ← strided
 ```
 
-Global reads and writes are both coalesced. The **shared read** is strided.
+Two shared-memory accesses. They behave differently:
+
+| access | across a warp (fixed `ty`, `tx` = 0…31) |
+|---|---|
+| **write** `tile[ty][tx]` | `tx` is the **column** index → sweeps banks, conflict-free |
+| **read** `tile[tx][ty]` | `tx` is the **row** index → multiplies the stride |
+
 
 ---
 
-## The fix is one column of padding
+## Warp layout: consecutive `tx`, one `ty`
 
-| version | bank of lane *tx* | distinct banks | shared/block |
+A warp is 32 **consecutive linear thread ids**. With `blockDim = (32, 32)`:
+
+$$\text{tid} = ty \cdot 32 + tx$$
+
+So a warp is **32 consecutive `tx`, all with the same `ty`** (warp `w` ⇔ `ty = w`).
+
+That is the layout of the transpose read:
+
+```text
+lane:  0    1    2    3   …   31
+tx:    0    1    2    3   …   31
+ty:    w    w    w    w   …    w      (same for all lanes)
+reads: tile[0][w], tile[1][w], tile[2][w], …, tile[31][w]
+```
+
+**Column `w` of the tile.** Every lane touches a different **row**, same **column**.
+That is the strided pattern — and shared memory charges for it, unlike VRAM.
+
+---
+
+## Unpadded (32): the `tx` term vanishes
+
+`width = 32`. The read is `tile[tx][ty]`, word index `tx·32 + ty`:
+
+$$\text{bank} = (tx \cdot 32 + ty) \bmod 32 = \underbrace{(tx \cdot 32) \bmod 32}_{=\,0} + ty = ty$$
+
+The `tx` dependence **cancels** — every lane in the warp computes the same bank.
+
+| lane `tx` | reads | word index | bank |
+|---:|---|---:|---:|
+| 0 | `tile[0][ty]` | `0·32 + ty` | `ty` |
+| 1 | `tile[1][ty]` | `1·32 + ty` | `ty` |
+| 2 | `tile[2][ty]` | `2·32 + ty` | `ty` |
+| … | … | … | `ty` |
+| 31 | `tile[31][ty]` | `31·32 + ty` | `ty` |
+
+**1 distinct bank for 32 lanes, and all different words → 32-way conflict → 32 serialized cycles** for one transaction.
+
+---
+
+## Padded (33): the `tx` term returns
+
+`width = 33`. Word index `tx·33 + ty`:
+
+$$\text{bank} = (tx \cdot 33 + ty) \bmod 32 = \big(tx \cdot \underbrace{(33 \bmod 32)}_{=\,1} + ty\big) \bmod 32 = (tx + ty) \bmod 32$$
+
+`tx` now contributes **linearly**, and `tx ↦ (tx + ty) mod 32` is a **rotation** of `Z₃₂` — a bijection. With `ty = 0`:
+
+| lane `tx` | word index | bank |
+|---:|---:|---:|
+| 0 | `0` | `0` |
+| 1 | `33` | `1` |
+| 2 | `66` | `2` |
+| … | … | … |
+| 31 | `1023` | `31` |
+
+**32 distinct banks → 1 transaction.** The rotation by `ty` is irrelevant; bijection is all that matters. (The **write** `tile[ty][tx]` was already conflict-free in both versions — see the table on the "which access" slide.)
+
+---
+
+## Why 33 — and why 32 is the unlucky number
+
+The requirement is just: **`width` coprime to 32**, i.e. `width` odd.
+- Then `tx ↦ tx·width mod 32` is a bijection on `Z₃₂`.
+
+`width = 32` is the **worst** case because `32 ≡ 0 (mod 32)`:
+- the row index **disappears** from the bank formula, so a column-strided
+access (all lanes in one column) collapses to a single bank.
+
+`width = 33` is the **smallest** odd stride, so it wastes the least shared memory:
+
+| version | bank of lane `tx` | distinct banks | shared/block |
 |---|---|---:|---:|
-| `(T, T)`, T=32 | `(tx*32 + ty) % 32 = ty` | **1** | 4.00 KB |
-| `(T, T+1)` = 33 | `(tx*33 + ty) % 32` | **32** | 4.12 KB |
+| `(T, T)`, T=32 | `(tx·32 + ty) % 32 = ty` | **1** | 4.00 KB |
+| `(T, T+1)` = 33 | `(tx·33 + ty) % 32` | **32** | 4.12 KB |
 
-128 extra bytes remove a 32-way serialization.
+**128 extra bytes** (one float × 32 rows) remove a **32-way serialization**
+on the hot access. That is the trade.
 
 📁 `week09/06_bank_conflicts.py` — both versions verified against `A.T`.
+
+---
+
+## One rule, one sentence
+
+> **A warp is free when its lanes land in distinct banks (different words)
+> or on the same word (broadcast).**
+>
+> **A row-major 2D array with a multiple-of-32 row stride makes the row
+> index vanish from the bank formula — so a column-strided access
+> collapses to one bank.**
+>
+> **Pad the stride to the next odd number.**
+
+That single change — 32 → 33 — turns a 32-cycle serialization into 1 cycle
+for 3 % more shared memory. 
+The tiled matmul,the block reduction, the softmax are already bank-friendly; the transpose is the one kernel where the natural index order fights the bank layout.
 
 ---
 
@@ -1016,7 +1267,7 @@ So: try the tool, then fall back. The fallback is real profiling.
 
 ---
 
-## Try it (in class, once)
+## Try it 
 
 ```bash
 which ncu                      # is Nsight Compute there at all?
