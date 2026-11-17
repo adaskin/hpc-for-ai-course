@@ -954,6 +954,7 @@ assert np.allclose(dC.copy_to_host(), A @ B, atol=1e-2)
 
 ---
 
+
 ## Predict, then run
 
 At N = 1024 the naive kernel must read 8.6 GB: at least **27 ms** at 320 GB/s (Part I).
@@ -1454,6 +1455,25 @@ Spills (`local` bytes > 0) mean VRAM traffic you did not ask for.
 
 ---
 
+---
+
+## Walkthrough: what limits occupancy on a T4?
+
+A T4 SM has three hard ceilings: **1,024 threads**, **64 KB shared memory**, and **65,536 registers**.
+Suppose we launch blocks of **256 threads** (8 warps per block; 4 blocks = 100% occupancy):
+
+| Kernel profile | Shared / block | Regs / thread | Regs / block | Bottleneck resource | Max blocks / SM | Achieved occupancy |
+|---|---:|---:|---:|---|---:|---:|
+| **A: Light** | 2 KB | 32 | 8,192 | **Threads** (4 × 256 = 1,024) | **4** | **100%** (32/32 warps) |
+| **B: Shared-heavy** | 24 KB | 32 | 8,192 | **Shared mem** (2 × 24 KB = 48 KB) | **2** | **50%** (16/32 warps) |
+| **C: Register-heavy** | 2 KB | 96 | 24,576 | **Registers** (2 × 24,576 = 49,152) | **2** | **50%** (16/32 warps) |
+
+- Adding a 3rd block in **Case B** requires 72 KB (> 64 KB limit).
+- Adding a 3rd block in **Case C** requires 73,728 registers (> 65,536 limit).
+- **Takeaway:** Whichever resource hits its SM ceiling **first** caps the number of resident warps.
+
+---
+
 ## Occupancy is not the goal
 
 - Volkov's classic result: **more work per thread** (instruction-level
@@ -1658,6 +1678,30 @@ cuda.synchronize()                               # all streams
 
 ---
 
+## Walkthrough: how 3 streams overlap on hardware
+
+The Python `for` loop queues commands **instantly** (asynchronously).
+The GPU routes them to **three independent hardware engines**:
+
+```text
+Time →        t1           t2           t3           t4           t5
+          ┌─────────┐  ┌─────────┐  ┌─────────┐
+H2D Copy  │ Chunk 0 │  │ Chunk 1 │  │ Chunk 2 │
+          └─────────┘  └─────────┘  └─────────┘
+                       ┌─────────┐  ┌─────────┐  ┌─────────┐
+SM Compute             │ Chunk 0 │  │ Chunk 1 │  │ Chunk 2 │
+                       └─────────┘  └─────────┘  └─────────┘
+                                    ┌─────────┐  ┌─────────┐  ┌─────────┐
+D2H Copy                            │ Chunk 0 │  │ Chunk 1 │  │ Chunk 2 │
+                                    └─────────┘  └─────────┘  └─────────┘
+```
+
+- **Inside one stream (e.g., Chunk 0):** `H2D → Compute → D2H` runs strictly in order.
+- **Across streams at `t3`:** All three hardware engines work in parallel (`D2H 0`, `Compute 1`, `H2D 2`).
+- **Without pinned memory:** The `H2D` engine stalls waiting on the CPU, collapsing the staircase back into serial execution.
+
+---
+
 ## Run it
 
 ```bash
@@ -1707,6 +1751,44 @@ python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
 Report the sentence: *"my kernel is ______-bound, because ______ GB/s
 out of 320, and ______ GFLOP/s out of 8,100."*
 
+---
+
+# further notes
+
+---
+
+## Real-world matrices: safe boundary checks
+
+What if matrix dimensions \((M \times K)\) and \((K \times N)\) are **not** multiples of T?
+Two rules prevent deadlocks and garbage math:
+
+1. **Pad out-of-bounds loads with `0.0`** (never leave shared memory uninitialized).
+2. **Keep `cuda.syncthreads()` outside any `if` block.**
+
+```python
+        for k0 in range(0, K, T):
+            # 1. Load tile of A (or pad with 0.0 if outside matrix)
+            if row < M and (k0 + tx) < K:
+                sA[ty, tx] = A[row, k0 + tx]
+            else:
+                sA[ty, tx] = 0.0
+
+            # 2. Load tile of B (or pad with 0.0 if outside matrix)
+            if (k0 + ty) < K and col < N:
+                sB[ty, tx] = B[k0 + ty, col]
+            else:
+                sB[ty, tx] = 0.0
+
+            cuda.syncthreads()              # ALL threads reach this
+
+            for k in range(T):
+                acc += sA[ty, k] * sB[k, tx]
+            cuda.syncthreads()              # ALL threads reach this
+
+        # 3. Guard only the final write to global memory
+        if row < M and col < N:
+            C[row, col] = acc
+```
 ---
 
 ## Forward map
