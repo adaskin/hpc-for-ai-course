@@ -219,17 +219,17 @@ Week 13    deployment                 torch.compile
 
 ## Today's arc
 
-| Part | Content |  
-|---|---|
-| I | Diagnosis: count the bytes |
-| II | The memory hierarchy |  
-| III | Coalescing |  
-| IV | Shared memory + tiling | 
-| V | Reductions (softmax redeemed) | 
-| VI | Occupancy | 
-| VII | Profiling | 
-| VIII | Streams: overlap copies and compute | 
-| IX | Lab + wrap |
+The memory hierarchy 
+We will see in details
+- **Coalescing** 
+- **Shared memory + tiling**
+
+We will just go through briefly (just know what it is)
+- Reductions (softmax redeemed) 
+- Occupancy 
+- Profiling 
+- Streams: overlap copies and compute  
+- Lab + wrap 
 
 ---
 
