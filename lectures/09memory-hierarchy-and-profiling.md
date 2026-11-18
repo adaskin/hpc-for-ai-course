@@ -65,6 +65,56 @@ Kernel function: a gpu function meant to be called by the CPU code.
 ## Thread positioning in kernel function
 - When running a kernel, the kernel function’s code is executed by every thread once. 
 
+---
+```C
+__global__ void vecAdd(float* A, float* B, float* C, int vectorLength){
+     // calculate which element this thread is responsible for computing
+     int workIndex = threadIdx.x + blockDim.x * blockIdx.x;
+
+     if(workIndex < vectorLength) {
+         // Perform computation
+         C[workIndex] = A[workIndex] + B[workIndex];
+     }
+}
+
+int main(){
+    ...
+    // A, B, and C are vectors of 1024 elements
+    // vectorLength is an integer storing number of elements in the vector
+    int threads = 256;
+    int blocks = cuda::ceil_div(vectorLength, threads);
+    vecAdd<<<blocks, threads>>>(devA, devB, devC, vectorLength);
+    ...
+}
+```
+---
+
+## Cuda Python
+```python
+from numba import cuda
+
+@cuda.jit
+def my_kernel(input, output):
+    ...
+
+## launch the kernel
+my_kernel[num_thread_blocks, threads_per_block](in_array, out_array)
+```
+---
+## Multi dimensional grids and Thread Blocks
+```python
+from numba import cuda
+
+@cuda.jit
+def function(input, output):
+    ...
+
+## launch the kernel
+function[(gridX, gridY), (blockX, blockY)](in_array, out_array)
+```
+
+---
+
 ```python
 # manual positioning
 @cuda.jit
@@ -103,6 +153,14 @@ def increment_a_2D_array(an_array):
 ---
 
 # Review: Memory Management
+
+```C
+ // Use unified memory to allocate buffers in C
+    cudaMallocManaged(&A, vectorLength*sizeof(float));
+    cudaMallocManaged(&B, vectorLength*sizeof(float));
+    cudaMallocManaged(&C, vectorLength*sizeof(float));
+```
+---
 
 ```python
 #an empty device array
@@ -196,6 +254,142 @@ When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierar
 
 ---
 
+## The Warp: the true unit of execution
+
+- The SM does **not** schedule individual threads; it schedules **warps** (groups of **32 consecutive threads**).
+- **Memory consequences:** Whenever a warp executes a load instruction, all 32 lanes issue their memory requests **together**.
+  - *Global memory:* 32 requests are merged into cache lines (**coalescing**).
+  - *Shared memory:* 32 requests hit 32 memory modules simultaneously (**banks**).
+- **Latency hiding:** When Warp A stalls waiting on slow VRAM (~500 cycles), the SM switches to Warp B in **0 cycles**—if enough warps are resident (**occupancy**, Part VI).
+
+---
+
+## Why hardware matters today
+
+1. **Compute is cheap, memory is far:** An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
+2. **Blocks stay put:** Because a block lives on **one SM**, its threads can share the SM's fast on-chip SRAM.
+3. **32 is the magic number:** Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
+
+Keep these three numbers in mind as we start counting bytes.
+
+---
+![memory types](img/w09-memory-types-scope.png)
+
+---
+## Global Memory
+
+```python
+@cuda.jit
+def vecadd(A, B, C):
+    work_index = cuda.grid(1)
+    C[work_index] = A[work_index] + B[work_index]
+```
+A, B, and C are in global memory and are being accessed by this vector add kernel.
+
+---
+
+## Shared Memory
+```python
+@cuda.jit
+def example_syncthreads(input_data, output_data):
+    shared_data = cuda.shared.array(shape=128, dtype=np.int32)
+    
+    shared_data[cuda.threadIdx.x] = input_data[cuda.blockIdx.x*cuda.blockDim.x + cuda.threadIdx.x]
+    cuda.syncthreads()
+
+    if cuda.threadIdx.x == 0:
+        sum = 0.0
+        for x in shared_data: 
+            sum = sum + x
+        output_data[cuda.blockIdx.x] = sum
+```
+`cuda.syncthreads()` blocks all threads in the thread block until all threads have reached the call to `cuda.syncthreads()`
+
+---
+
+## Static allocation of Shared Memory
+```python
+from numba import cuda
+import numpy as np
+
+shared_array = cuda.shared.array(shape=1024, dtype=np.float32)
+```
+## Dynamic Allocation of Shared Memory
+
+```python
+from numba import cuda
+import numpy as np
+
+## setting shape=0 indicates that this array will be dynamically sized by the kernel launch's execution configuration
+shared_array = cuda.shared.array(shape=0, type=np.float32)
+```
+
+---
+
+## Registers
+- Registers are located on the SM and have thread local scope.
+- Register usage is managed by the compiler
+- registers are used for thread local storage during the execution of a kernel.
+
+---
+
+## Local Memory
+Local memory is thread local storage similar to registers and managed by NVCC, but the physical location of local memory is in the global memory space. 
+- The ‘local’ label refers to its logical scope, not its physical location.
+
+Local memory is used for thread local storage during the execution of a kernel. Automatic variables that the compiler is likely to place in local memory are:
+
+- Arrays for which it cannot determine that they are indexed with constant quantities,
+
+- Large structures or arrays that would consume too much register space,
+
+- Any variable if the kernel uses more registers than available, that is register spilling.
+
+---
+
+> Because the local memory space resides in device memory, local memory accesses have the same latency and bandwidth as global memory accesses and are subject to the same requirements for memory coalescing
+
+---
+## Constant Memory
+- Constant memory has grid scope and is accessible for the lifetime of the application. 
+- The constant memory resides on the device and is read-only to the kernel.
+```python
+const_array = numba.cuda.const.array_like(ary) # within the kernel code 
+#creates a constant memory array 
+# containing the data stored in the host array ary
+```
+- Resides in constant memory space,
+- Has a distinct object per device,
+- Is accessible from all the threads within the grid
+
+---
+
+```python
+from numba import cuda
+import numpy as np
+
+host_array = np.zeros(128, dtype=np.float32)
+## fill host_array with other data
+
+@cuda.jit
+def kernel(args):
+    ...
+
+    const_array = cuda.const.array_like(a)
+
+    # this access now goes through constant memory
+    a = const_array[cuda.threadIdx.x]
+```
+> Constant memory is useful for small amounts of data that each thread will use in a read-only fashion. 
+---
+
+## Caches
+- GPU devices have a multi-level cache structure which includes L2 and L1 caches.
+- L1 cache is physically located on each SM and is the same physical space used by shared memory. If no shared memory is utilized by a kernel, the entire physical space will be utilized by the L1 cache.
+- The L2 and L1 caches can be controlled via functions that allow the developer to specify various caching behaviors
+
+---
+
 ## Inside a Streaming Multiprocessor (SM)
 
 Every SM is an independent mini-processor with its own compute units and **on-chip memory**:
@@ -223,28 +417,146 @@ Every SM is an independent mini-processor with its own compute units and **on-ch
 
 ---
 
-## The Warp: the true unit of execution
+# Memory Performance
 
-- The SM does **not** schedule individual threads; it schedules **warps** (groups of **32 consecutive threads**).
-- **Memory consequences:** Whenever a warp executes a load instruction, all 32 lanes issue their memory requests **together**.
-  - *Global memory:* 32 requests are merged into cache lines (**coalescing**, Part III).
-  - *Shared memory:* 32 requests hit 32 memory modules simultaneously (**banks**, Part IV).
-- **Latency hiding:** When Warp A stalls waiting on slow VRAM (~500 cycles), the SM switches to Warp B in **0 cycles**—if enough warps are resident (**occupancy**, Part VI).
+- Global memory is accessed via 32-byte memory transactions. 
+> - When a CUDA thread requests a word of data from global memory, the relevant warp coalesces the memory requests from all the threads in that warp into the number of memory transactions necessary to satisfy the request, depending on the size of the word accessed by each thread and the distribution of the memory addresses across the threads.
+
+> - **if a thread requests a 4-byte word, the actual memory transaction the warp will generate to global memory will be 32 bytes in total.** 
+
+-  To use the memory system most efficiently, the warp should use all the memory that is fetched in a single memory transaction
+- 
+---
+
+## Coalesced Memory Access
+
+![coalesced](img/w09-coalesced-memory-access.png)
+[https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
+
+## Defines a CUDA kernel to perform C = A + B vector addition
+```python
+@cuda.jit
+def vecadd(A, B, C):
+    work_index = cuda.grid(1)
+    C[work_index] = A[work_index] + B[work_index]
+```
+- simple coalesced access
+
+---
+### Worst Case
+
+the pathologically worst case scenario is when consecutive threads access data elements that are 32 bytes or more apart from each other in memory. In this case, the warp will be forced to issue a 32-byte memory transaction for each thread, and the total number of bytes of memory traffic will be 32 bytes times 32 threads/warp = 1024 bytes.
+![coalesced worst case](img/w09-coalesced-worst-case.png)
+
+---
+## Matrix transpose kernel, one thread per matrix element launched with 
+
+```C
+/* macro to index a 1D memory array with 2D indices in row-major order */
+/* ld is the leading dimension, i.e. the number of columns in the matrix     */
+
+#define INDX( row, col, ld ) ( ( (row) * (ld) ) + (col) )
+
+/* CUDA kernel for matrix transpose */
+__global__ void cuda_transpose(int m, float *a, float *c ){
+    int myCol = blockDim.x * blockIdx.x + threadIdx.x;
+    int myRow = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if( myRow < m && myCol < m ){
+        c[INDX( myCol, myRow, m )] = a[INDX( myRow, myCol, m )];
+    } /* end if */
+    return;
+} /* end cuda_transpose */
+```
 
 ---
 
-## Why hardware matters today
-
-1. **Compute is cheap, memory is far:** An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
-2. **Blocks stay put:** Because a block lives on **one SM**, its threads can share the SM's fast on-chip SRAM.
-3. **32 is the magic number:** Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
-
-Keep these three numbers in mind as we start counting bytes.
+![alt text](img/w09-matrix-transpose.png)
 
 ---
 
+- In a 2d thread block, the `x` index moves the fastest, so consecutive values of `threadIdx.x` should be accessing consecutive elements of memory. 
+- `threadIdx.x` appears in `myCol`, and when `myCol` is the second argument to the `INDX` macro, consecutive threads are reading consecutive values of `a`, so the read of `a` is perfectly coalesced.
+
+---
+the writing of c is not coalesced, 
+- because consecutive values of threadIdx.x (again examine myCol) are writing elements to `c` that are `ld` (leading dimension) elements apart from each other.
+- because `myCol` is the first argument to the `INDX` macro, and as the first argument to `INDX` increments by 1, the memory location changes by `ld`. When `ld` is larger than 32 (which occurs whenever the matrix sizes are larger than 32), 
+- this is equivalent to the pathological case
+
+---
+> To alleviate these uncoalesced writes, the use of shared memory can be employed, which will be described in the next section.
+
+---
+
+## Shared Memory Access Patterns
+
+- Shared memory has 32 banks that are organized such that successive 32-bit words map to successive banks. 
+- Each bank has a bandwidth of 32 bits per clock cycle.
+
+> When multiple threads in the same warp attempt to access different elements in the same bank, a bank conflict occurs
+> - the access to the data in that bank will be serialized until the data in that bank has been obtained by all the threads that have requested it.
+
+---
+
+The two exceptions to this scenario happen when multiple threads in the same warp are accessing (either reading or writing) the same shared memory location.
+-  For read accesses, the word is broadcast to the requesting threads. 
+-  For write accesses, each shared memory address is written by only one of the threads (which thread performs the write is undefined).
+  
+
+---
+
+![alt text](img/w09-shared-memory-access.png)
+- Left:    Linear addressing with a stride of one 32-bit word (no bank conflict). 
+- Middle:    Linear addressing with a stride of two 32-bit words (two-way bank conflict). 
+- Right:    Linear addressing with a stride of three 32-bit words (no bank conflict). 
+[https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
+---
+
+```python
+import numpy as np
+from numba import cuda
+import cupy as cp
+
+## Matrix transpose kernel, one thread per matrix element launched with 
+## 2D thread block on 2D grid to match matrix size
+## Stages input to shared memory
+@cuda.jit
+def smem_transpose(a, c):
+    smemArray = cuda.shared.array(shape=(32, 32), dtype=np.float32)
+
+    tile_col = cuda.blockDim.x * cuda.blockIdx.x
+    tile_row = cuda.blockDim.y * cuda.blockIdx.y
+
+    smemArray[(cuda.threadIdx.x, cuda.threadIdx.y)] = a[(tile_row + cuda.threadIdx.y, tile_col + cuda.threadIdx.x)]
+
+    cuda.syncthreads()
+    
+    c[(tile_col + cuda.threadIdx.y, tile_row + cuda.threadIdx.x)] = smemArray[(cuda.threadIdx.y, cuda.threadIdx.x)]
+
+```
+---
+
+-  Each thread in the same thread block has the same tileRow and tileCol values,
+-  The kernel then proceeds with each thread block copying a 32 x 32 tile of the matrix from global memory to shared memory
+   - Since the size of a warp is 32 threads, this copy operation will be executed by 32 warps, with no guaranteed order between the warps.
+
+- Shared memory is used to stage data from global memory to ensure that reads from and writes to global memory are both coalesced properly.
+
+- Shared memory is used to allow threads in the same thread block to share data among themselves.  
+
+---
+
+A common fix to avoid bank conflicts is to pad the shared memory by adding one to the column dimension of the array as follows:
+- smemArray = cuda.shared.array(shape=(32, 32 + 1), dtype=np.float32)
+
+![](image.png)
+The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.
+
+![alt text](image-1.png)
 <!-- _class: lead -->
 
+---
 
 # Part I
 # Diagnosis: count the bytes
@@ -274,6 +586,18 @@ T4: 8,100 GFLOP/s ÷ 320 GB/s ≈ **25 FLOP/byte** — the *ridge point*.
 
 - Below 25 → **memory-bound**. More arithmetic units won't help.
 - Above 25 → **compute-bound**. Now FLOPs matter.
+
+---
+
+![tiled vs simt](img/w09-tile-vs-simt.png)
+**tile space:** conceptually partitioning an array into equally sized, non-overlapping tiles. 
+[https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
+
+---
+![tile space](img/w09-tile-space.png)
+a two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles
+
+[https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
 
 ---
 
