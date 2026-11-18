@@ -273,7 +273,10 @@ When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierar
 Keep these three numbers in mind as we start counting bytes.
 
 ---
+
+## GPU  Device Memory Types and Locations
 ![memory types](img/w09-memory-types-scope.png)
+[https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
 
 ---
 ## Global Memory
@@ -550,22 +553,17 @@ def smem_transpose(a, c):
 A common fix to avoid bank conflicts is to pad the shared memory by adding one to the column dimension of the array as follows:
 - smemArray = cuda.shared.array(shape=(32, 32 + 1), dtype=np.float32)
 
-![](image.png)
+![w0-transpose-1](img/w09-transpose-1.png)
 The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.
 
-![alt text](image-1.png)
+![w0-transpose-1 padded](img/w09-transpose-2.png)
 <!-- _class: lead -->
 
 ---
 
-# Part I
-# Diagnosis: count the bytes
+# Performance Diagnosis by Counting the Bytes
 
----
-
-## Two numbers from Week 8
-
-Your `vector_add` kernel:
+Your `vector_add` kernel (week08):
 
 ```python
 c[i] = a[i] + b[i]      # 2 reads + 1 write = 12 bytes, 1 FLOP
@@ -808,7 +806,7 @@ Scope is not a detail. It decides what can cooperate with what.
 
 ---
 
-## The trap: "local" means scope, not location
+## "local" means scope, not location
 
 In CUDA, **"local"** describes *who can see it* (private to one thread), **not** *where it sits on the chip*:
 
@@ -853,7 +851,6 @@ Need a grid-wide boundary? **Launch a second kernel.**
 
 <!-- _class: lead -->
 
-# Part III
 # Coalescing
 
 ---
@@ -1130,7 +1127,6 @@ consecutive `threadIdx.x` then touch consecutive memory.
 
 <!-- _class: lead -->
 
-# Part IV
 # Shared memory and tiling
 
 ---
@@ -1533,7 +1529,6 @@ Use the library for matmul. Write kernels for what the library does not have.
 
 <!-- _class: lead -->
 
-# Part V
 # Reductions: softmax redeemed
 
 ---
@@ -1717,12 +1712,12 @@ Name it, recognise it in papers; implement it as a bonus exercise.
 
 <!-- _class: lead -->
 
-# Part VI
+
 # Occupancy
 
 ---
 
-## Definition
+**Definition**
 
 $$\text{occupancy} = \frac{\text{resident warps per SM}}{\text{maximum warps per SM}}$$
 
@@ -1813,7 +1808,6 @@ Keep the fastest one that is **correct**.
 
 <!-- _class: lead -->
 
-# Part VII
 # Profiling
 
 ---
@@ -1913,7 +1907,6 @@ Open the JSON in `chrome://tracing` or `ui.perfetto.dev`.
 
 <!-- _class: lead -->
 
-# Part VIII
 # Streams: overlapping copies and compute
 
 ---
@@ -2043,7 +2036,6 @@ python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
 
 <!-- _class: lead -->
 
-# Part IX
 # Lab and wrap-up
 
 ---
@@ -2077,9 +2069,7 @@ out of 320, and ______ GFLOP/s out of 8,100."*
 
 ---
 
-# further notes
-
----
+# Further notes
 
 ## Real-world matrices: safe boundary checks
 
