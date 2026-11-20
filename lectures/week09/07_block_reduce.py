@@ -1,4 +1,4 @@
-"""Week 9, Part V: cooperative reduction inside a block, then across blocks.
+"""Week 9: cooperative reduction inside a block, then across blocks.
 
   shared tree + 1 atomic per block : n/TPB atomics
   one atomic per thread            : n atomics, all queued on one address (Week 3's race, "fixed" by a queue)

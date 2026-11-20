@@ -1,0 +1,2 @@
+# Marp CLI settings for the lecture decks: allow the small amount of HTML (columns, cards) used in the slides.
+html: true

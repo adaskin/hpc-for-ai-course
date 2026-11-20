@@ -1,4 +1,4 @@
-"""Week 9, Part I: count the bytes. No GPU needed.
+"""Week 9: count the bytes. No GPU needed.
 
 Reproduces the tables on the slides: the naive matmul traffic model and the
 tiled traffic model, against the T4 ceilings (320 GB/s, 8,100 GFLOP/s).

@@ -1,4 +1,4 @@
-"""Week 9, Part IV: shared-memory bank conflicts, on the Week 8 bonus kernel: transpose.
+"""Week 9: shared-memory bank conflicts, on the Week 8 bonus kernel: transpose.
 
   load   tile[ty, tx]  coalesced global read, conflict-free shared write
   store  tile[tx, ty]  coalesced global write, but a STRIDED shared read:

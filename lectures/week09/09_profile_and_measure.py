@@ -1,4 +1,4 @@
-"""Week 9, Part VII: profile a kernel, falling back to measurement when counters are unavailable.
+"""Week 9: profile a kernel, falling back to measurement when counters are unavailable.
 
   1. Is Nsight Compute (`ncu`) installed?  If so, try it on 03_matmul_naive.py.
   2. On Colab the counters are often blocked (ERR_NVGPUCTRPERM) -> fall back.
@@ -57,7 +57,7 @@ def measure(n):
         model_bytes = 2 * n**3 * 4 / tile
         print(f"{name:<12}{ms:>9.3f}{gflops(flops, ms):>10.1f}"
               f"{100 * gflops(flops, ms) / PEAK_GFLOPS:>10.1f}%{gbs(model_bytes, ms):>12.0f}")
-    print("\n'model GB/s' divides the traffic model of Part I by the measured time.")
+    print("\n'model GB/s' divides the traffic model from the Counting-the-bytes slides by the measured time.")
     print("Read it against the ceilings: the one you are close to is your bottleneck.")
 
 
