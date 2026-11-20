@@ -2,7 +2,21 @@
 
 *YZM 513, Fall 2026. Outline only: the Marp deck, scripts and lab come next, in the Week 6 / Week 9 style.*
 
-**Assumption.** The README schedule is one week behind the course as taught (the midterm review became the midterm, so Weeks 8 and 9 are the kernel weeks). The next lecture is therefore **Week 10 = README "Week 9: Data Pipelines for Deep Learning"**, which is also where the Week 9 deck points ("Next week: feeding the GPU"). Project 2 proposals are due this week, so the session reserves a slot for them.
+**Assumption.** The README schedule is one week behind the course as taught, so the next lecture is **Week 10 = README "Week 9: Data Pipelines for Deep Learning"**. The Week 9 deck also ends with "Next week: feeding the GPU". Project 2 proposals are due this week, so the session reserves a slot for them.
+
+## Approach: follow the official PyTorch docs
+
+The deck is anchored on one official tutorial, so students can re-read the same material afterwards. Its progression (baseline, workers, `pin_memory`, persistent workers, prefetcher, `__getitems__`) is the spine of Part II.
+
+| Part | Official page | What to lift |
+|---|---|---|
+| I, II | [Data Loading Optimization in PyTorch](https://docs.pytorch.org/tutorials/intermediate/intermediate_data_loading_tutorial.html) | synthetic dataset, baseline, step-by-step cumulative speedups, shared-memory section |
+| II, IV | [`torch.utils.data` / `DataLoader`](https://docs.pytorch.org/docs/stable/data.html) | knobs and warnings (`in_order`, start method, seeding, memory) |
+| III | [Good usage of `non_blocking` and `pin_memory()`](https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html) | what overlaps and what does not, the two correctness hazards |
+| V | [Profiler recipe](https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html) | `schedule`, `record_function`, Chrome-trace export |
+| V, VI | [Performance Tuning Guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) | avoiding syncs, `DataLoader` settings, `set_to_none`, `cudnn.benchmark` |
+
+To keep it understandable, the deck stays short on the *core* ladder and treats everything else as brief "know it exists" slides, as in Week 9.
 
 ## The week in one sentence
 
@@ -12,100 +26,143 @@
 
 By the end of the session a student can:
 
-1. **Diagnose** whether a training job is input-bound, from a profiler trace and from three numbers (time waiting for data, time computing, GPU utilisation), and not only from `nvidia-smi`.
-2. **Explain** what each `DataLoader` knob does and which hardware resource it spends: `num_workers` (CPU cores), `pin_memory` and `non_blocking` (PCIe), `prefetch_factor` and `persistent_workers` (host RAM, start-up cost).
-3. **Estimate** how many workers a job needs from the GPU step time and the per-sample CPU cost, and say when more workers cannot help (too few cores, slow storage).
-4. **Choose** a storage layout (many small files vs sharded streams vs memory-mapped arrays) and say why sequential reads win.
-5. **Fix** a deliberately slow training script and report before/after throughput with evidence.
+1. **Diagnose** whether a training job is input-bound, from a profiler trace and from timing the data wait separately from the step, and not only from `nvidia-smi`.
+2. **Apply the ladder** (workers, pinned memory, persistent workers, prefetching, batched `__getitems__`), predict each step's effect, and say which resource it spends (CPU cores, RAM, PCIe).
+3. **Explain** what actually overlaps copies with compute, and why `pin_memory=True` plus `non_blocking=True` alone does not guarantee it.
+4. **Avoid the hazards:** hidden synchronisation points that make a job look input-bound, and unsafe `non_blocking` copies.
+5. **Fix** a deliberately slow script and report cumulative speedup with evidence, including steps that gave no gain.
 
-## Where it sits (review slide, one line per earlier week)
+## Where it sits (review slide)
 
 | Earlier week | Returns today as |
 |---|---|
 | 1: profiling, Amdahl | the data stage is the serial part; speeding up the GPU alone hits Amdahl's wall |
-| 3-4: GIL, processes, worker pools | `DataLoader` workers are processes for exactly this reason; the queue between them is a producer/consumer pool |
-| 5: the four questions (split, assign, move, wait) | split = batches, assign = workers, move = pinned copy, wait = prefetch queue |
-| 6: transfers, arithmetic intensity | host-to-device copy cost; a transfer is a "kernel" with intensity 0 |
-| 9: streams, pinned memory, profiler timeline | `pin_memory` + `non_blocking=True` is the same overlap; "gaps between kernels" is today's diagnosis |
+| 2: vectorisation | `__getitems__`: one batched call instead of many per-sample calls |
+| 3-4: GIL, processes, worker pools, races | `DataLoader` workers are processes for exactly this reason; the queue is a producer/consumer pool; `non_blocking` misuse is a race on PCIe |
+| 5: the four questions (split, assign, move, wait); stragglers | split = batches, assign = workers, move = copy, wait = prefetch queue; `in_order=False` and slow workers |
+| 6: transfers | host-to-device copy cost |
+| 9: streams, pinned memory, timeline | the three requirements for copy/compute overlap; "gaps between kernels" is today's diagnosis |
 
 ## Deck parts
 
-Core parts are taught in full; brief parts are "know what it is", as in Week 9.
+**I. The idle GPU (core).** Open with a profiler timeline of a slow script, with visible gaps (bridge from the Week 9 closing question). Cost model: serial step = t_data + t_gpu; fully overlapped step = max(t_data, t_gpu). *Worked example:* 30 ms + 50 ms = 80 ms (GPU 62.5% busy) vs 50 ms (100%).
 
-**I. The idle GPU (core).** Open with a profiler timeline of a slow script, with visible gaps. The cost model: serial step = t_data + t_gpu, overlapped step = max(t_data, t_gpu). *Worked example:* t_data = 30 ms, t_gpu = 50 ms gives 80 ms (GPU 62.5% busy) vs 50 ms (100%). Bridge from Week 9's closing question.
+**II. The optimisation ladder (core).** One shared training loop and the official synthetic dataset (512 samples, batch 32, 5 ms of simulated per-sample transform work). For each step: **predict, run, record the cumulative speedup**.
+1. Baseline: `num_workers=0`, `pin_memory=False` (the loader runs in the main process).
+2. `num_workers` (and `prefetch_factor`, default 2 batches per worker).
+3. `pin_memory=True`.
+4. `persistent_workers=True`.
+5. Overlapping the host-to-device copy with compute (the tutorial's `DataPrefetcher`).
+6. `__getitems__`: the `DataLoader` calls it once with the whole list of indices if the dataset defines it, so the per-sample work can be vectorised (Week 2 returns).
 
-**II. Anatomy of a `DataLoader` (core).** Dataset (map-style vs iterable), sampler, batch sampler, `collate_fn`, worker processes, the prefetch queue, the pin-memory thread. One diagram of the whole path from disk to GPU.
-- *Example 1: the knobs.* `num_workers` 0 vs N, with the "why does 0 mean the main process does everything" explanation.
-- *Example 2: sizing workers.* GPU step 50 ms for batch 128 needs 2,560 samples/s; one worker at 10 ms per sample delivers 100/s, so >= 26 workers. On a 2-core Colab VM the ceiling is about 200/s, so step time becomes ~640 ms and the GPU is ~8% busy (a 50,000-sample epoch: ~250 s instead of ~20 s). *Illustrative numbers; replace with measured ones from the Colab run.*
-- Worker pitfalls: `if __name__ == "__main__"` and spawn vs fork, copy-on-write and per-worker memory growth with Python-object datasets (prefer NumPy arrays or memory maps), checking that random augmentations differ across workers, `IterableDataset` needs explicit sharding with `get_worker_info()`.
+*What the tutorial reports (partial read of the page; hardware not stated; re-run on the T4 before quoting):* workers about 3.4x, `pin_memory` about 1.0x (no gain, because CPU transform time dominates), persistent workers about 1.1x, prefetcher about 1.0x extra, `__getitems__` about 4x extra (roughly 15x in total). Teach the null results on purpose: a knob only helps if it removes the actual bottleneck.
 
-**III. Getting bytes to the GPU (core).** Pageable vs pinned memory, `pin_memory=True`, `tensor.to(device, non_blocking=True)`, why it only overlaps with pinned memory (Week 9, streams). *Worked example:* a 128 x 3 x 224 x 224 float32 batch is 77 MB; the same batch as uint8 is 19 MB. Ship uint8, normalise on the GPU: 4x fewer bytes over PCIe (copy time to be measured on the T4, not assumed).
+*Worker sizing, one slide:* workers needed ~ GPU consumption rate / per-worker delivery rate (e.g. 2,560 samples/s needed at batch 128 and 50 ms/step; a worker delivering 100/s means 26). Past the core count more workers stop helping; check `os.cpu_count()` (the `DataLoader` itself warns when `num_workers` exceeds what it suggests). The lesson is "when workers run out, reduce per-sample work", which is the `__getitems__` / caching step, so the lab does not depend on core count.
 
-**IV. Where the data lives (brief).** The small-files problem; sequential vs random reads; sharded tar streams (WebDataset), TFRecord, Parquet/Arrow, `np.memmap`; decode cost (JPEG) vs storage cost; caching a decoded, resized dataset. GPU-side decode and augmentation (NVIDIA DALI, torchvision transforms on GPU tensors) as a one-slide pointer.
+**III. Getting bytes to the GPU, correctly (core).**
+- Pageable vs pinned host memory; `to(device, non_blocking=True)` returns control to the host early when the source is pinned.
+- **Copy/compute overlap on the device needs all three:** a free DMA engine, a **separate non-default CUDA stream**, and a pinned source (Week 9, Part VIII). `pin_memory=True` plus `non_blocking=True` on the default stream does not by itself give overlap; the prefetcher with its own stream does.
+- Calling `tensor.pin_memory().to(device, non_blocking=True)` by hand can be up to twice as slow as plain `.to(device)`, because `pin_memory()` blocks the host. Let the `DataLoader` pin batches (`pin_memory=True`) instead. The tutorial's single-tensor numbers: 0.375 ms pageable `.to()`, 0.428 ms for `pin_memory().to()`.
+- **Hazard slide (a Week 3 race on PCIe):** mutating a pinned source after a `non_blocking` host-to-device copy can corrupt what the GPU receives; `non_blocking` device-to-host without `torch.cuda.synchronize()` can give garbage. The tutorial's tests fail at iteration 2 and 0 respectively. Demo it, then fix it with a sync or event.
+- Bytes still count: a 128 x 3 x 224 x 224 float32 batch is 77 MB, and as uint8 it is 19 MB (ship uint8, normalise on the GPU). Copy time to be measured on the T4, not assumed.
 
-**V. Measuring it right (core).** `nvidia-smi` utilisation only says a kernel was running, not that the GPU was well used. Three better signals: (1) time in `next(loader)` vs time in the step, with a `cuda.synchronize()` before each clock stop; (2) `torch.profiler` with `schedule(wait, warmup, active)` and `record_function("data_wait")` labels; (3) images/s. View the trace in Perfetto (as in Week 9). TensorBoard's profiler plugin is in the README, but check that it is still maintained and installs on Colab before class; fall back to Perfetto if not.
+**IV. Worker pitfalls (brief, 2 slides).** One slide each, pointing at the `DataLoader` docs:
+- Start method and workers: Python 3.14 changed the default start method on non-Mac POSIX to `forkserver`, so the dataset and `worker_init_fn` must be picklable (no lambdas); guard with `if __name__ == "__main__"`. Check the Python version on Colab.
+- Seeding and memory: random augmentations must differ across workers (read the docs' randomness notes); Python-object datasets can grow memory per worker because of refcounting and copy-on-write, so prefer NumPy arrays.
+- `in_order=False` lets a slow worker not block the queue (a Week 5 straggler). The docs warn it can harm reproducibility and skew the data distribution on imbalanced data; use it knowingly.
+- Shared memory: `file_descriptor` vs `file_system` sharing strategies, `set_sharing_strategy()` before creating loaders with workers, and the "bus error" from a full `/dev/shm` on Docker/Colab.
 
-**VI. A tuning recipe (core).** Order matters: measure, then workers, then pinned memory, then prefetch and persistent workers, then storage format, then GPU-side transforms. Stop when the loader is no longer the bottleneck; more is waste (RAM, start-up time). Includes the honest case: "the job is not input-bound, so none of this helps".
+**V. Measuring it right (core).**
+- `nvidia-smi` utilisation only says some kernel was running; it is a hint, not a diagnosis.
+- **Hidden syncs:** `.item()`, `.cpu()`, `print(cuda_tensor)`, `nonzero()` and Python control flow on CUDA values force the CPU to wait for the GPU, so the job can look input-bound when it is sync-bound. The tutorial's own loop calls `loss.item()` every batch: show what it costs and how to log every N steps instead.
+- **Timing recipe:** separate host-only data wait from the step.
+  ```python
+  torch.cuda.synchronize(); t0 = time.perf_counter()
+  batch = next(it)
+  t1 = time.perf_counter()              # data wait: host time, no sync before this stop
+  ...  # forward, backward, optimizer step
+  torch.cuda.synchronize(); t2 = time.perf_counter()   # step time
+  ```
+  Do not sync before `t1`: that would add the previous step's GPU work to the data wait. The sync before `t0` serialises CPU and GPU a little, so the trace (below) is the unperturbed view.
+- `torch.profiler` with `schedule(wait, warmup, active)`, `record_function("data_wait")` labels and `export_chrome_trace`; open the JSON in Perfetto or `chrome://tracing`, as in Week 9. The profiler recipe I read shows the Chrome trace viewer; I did not see the TensorBoard plugin mentioned there, so the deck uses Perfetto/Chrome unless the plugin is re-checked.
 
-**VII. Project 2 proposals (10 min).** Walk through the one-page proposal checklist from the brief: system, workload, hardware, baseline, question, at least two interventions, metrics. Track A students should say which pipeline measurements they will take.
+**VI. Tuning recipe (core, one slide + one table).** Measure first; then apply the ladder in order and stop when the loader is no longer the bottleneck; remove unnecessary syncs. From the tuning guide: `optimizer.zero_grad(set_to_none=True)`, `torch.backends.cudnn.benchmark = True` for fixed-size convolutional inputs (autotuning can be non-deterministic). Include the honest case: "the job is not input-bound, so none of this helps".
 
-**VIII. Lab and wrap-up.** Lab below, takeaways, forward map, "Before next week", references.
+**VII. Where the data lives (brief, 1 slide).** Not covered by the official tutorial, so only a pointer: many small files vs sharded streams (WebDataset), Parquet/Arrow, `np.memmap`; decoded-and-cached datasets; GPU-side decode and augmentation (DALI). Point to each project's own docs.
 
-## Planned scripts (`lectures/week10/`, every loader checked against a baseline before timing)
+**VIII. Project 2 proposals (10 min).** Walk through the one-page proposal checklist from the brief (system, workload, hardware, baseline, question, at least two interventions, metrics). Track A students say which pipeline measurements they will take.
+
+**IX. Lab and wrap-up.** Lab below, takeaways, forward map, "Before next week", references.
+
+## Planned scripts (`lectures/week10/`)
 
 | File | Part | What it shows |
 |---|---|---|
 | `01_cost_model.py` | I | serial vs overlapped step time and worker-count arithmetic; **no GPU needed** |
-| `02_slow_training.py` | I, V | the provided script: per-sample file reads and PIL transforms, `num_workers=0`, small batch; prints images/s, data-wait share, GPU busy share |
-| `03_loader_sweep.py` | II | sweep `num_workers` {0, 1, 2, 4}, `prefetch_factor`, `persistent_workers`; results table |
-| `04_pinned_transfer.py` | III | pageable vs pinned, blocking vs `non_blocking`, float32 vs uint8 transfer; GB/s |
-| `05_storage_formats.py` | IV | many files vs one shard vs `np.memmap`, sequential vs shuffled reads |
-| `06_profile_pipeline.py` | V | `torch.profiler` trace with `data_wait` labels, exported for Perfetto |
-| `gpu_utils.py`, `make_figures.py` | all | shared timing helpers; regenerates the `img/w10-*.svg` figures |
+| `02_ladder.py` | II | the six steps on the synthetic dataset; prints a cumulative speedup table |
+| `03_pinned_transfer.py` | III | pageable vs pinned, blocking vs `non_blocking`, manual `pin_memory()`; the two hazard demos with a sync fix |
+| `04_hidden_syncs.py` | V | the same loop with `loss.item()` every step vs every N steps; data-wait vs step timing with the corrected recipe |
+| `05_profile_pipeline.py` | V | `torch.profiler` trace with `data_wait` labels, exported for Perfetto |
+| `06_real_images.py` | lab stage 2 | optional: CIFAR-10 or generated JPEGs, decode and augment cost, cached decoded data, uint8 transfer |
+| `gpu_utils.py`, `make_figures.py` | all | timing helpers; regenerates the `img/w10-*.svg` figures |
 
-## Lab: "Your GPU is idle 60% of the epoch. Find out why and fix it"
+Every step's output is checked against the baseline loop (same loss for the same data) before it is timed.
 
-1. Run `02_slow_training.py`; record images/s, data-wait share and GPU utilisation.
-2. **Predict** the bottleneck, then open the profiler trace and confirm or correct the prediction.
-3. Apply one change at a time (workers, pinned memory + `non_blocking`, prefetch, persistent workers, cached or sharded data, uint8 transfer); re-measure after each.
-4. Check that the model's loss curve and final accuracy did not change (correctness first, as in Weeks 8 and 9).
-5. **Deliverable:** a results table and the sentence *"my job was ______-bound, because ______ ms per step waiting for data out of ______ ms, and after the fix ______ images/s."*
+## Lab: "Your GPU is idle. Find out why and fix it"
 
-Colab note: the free VM has only a few CPU cores (check `os.cpu_count()`), so the lab is partly about learning when workers stop helping. Report that result honestly.
+**Stage 1: synthetic dataset (works on any core count).**
+1. Run the baseline; record seconds per epoch, data-wait share and a profiler trace.
+2. **Predict** each step's speedup, apply the ladder one step at a time, and fill in the cumulative speedup table. Idealised arithmetic gives a first prediction: the per-sample delay cost is `samples x 5 ms`, divided by the number of workers at best.
+3. Add the corrected data-wait timing and `record_function` labels; compare the trace before and after.
+4. **Deliverable:** the table plus the sentence *"my job was ______-bound, because ______ ms of each ______ ms step was spent waiting for data; the step that helped most was ______, and ______ gave no gain because ______."*
+
+**Stage 2 (optional, real images).** Decode, resize and augment cost, cached decoded data and uint8 transfer; before/after images/s, with the loss curve unchanged. Expect decoding to dominate; measure the gain, do not assume it.
 
 ## Takeaways (draft)
 
 1. Measure the wait before touching any knob; the knobs only help an input-bound job.
-2. Workers spend CPU cores; pinned memory spends RAM and enables overlap; prefetch spends RAM; each has a limit.
-3. Bytes moved over PCIe count, just like bytes moved from VRAM in Week 9: ship small types, convert on the GPU.
-4. Sequential reads from a few large shards beat random reads from many small files.
-5. `nvidia-smi` utilisation is a hint, not a diagnosis; use the trace.
+2. Climb the ladder in order and re-measure; expect some steps to give nothing.
+3. The biggest lever is usually less per-sample work (batched, cached, smaller dtype), not more workers.
+4. Overlap needs a pinned source, a separate stream and a free DMA engine; `non_blocking` without a sync is a race.
+5. Hidden syncs make an idle GPU look like a slow loader; use the trace, not just `nvidia-smi`.
 
 ## Forward map
 
 | today | where it reappears |
 |---|---|
-| input pipeline throughput | per-GPU data feeding in DDP, `DistributedSampler` (Weeks 11-12) |
-| pinned memory, overlap | DDP communication overlap (Weeks 11-12) |
-| profiler traces | mixed precision and `torch.compile` benchmarks (Weeks 12-13) |
-| storage formats, caching | Project 2, Track A (data loading and transfer overlap) |
+| input throughput and `DistributedSampler` | per-GPU data feeding in DDP (Weeks 11-12) |
+| copy/compute overlap, hidden syncs | DDP communication overlap (Weeks 11-12), mixed-precision and `torch.compile` benchmarks (Weeks 12-13) |
+| the measurement recipe | Project 2 reports (all tracks) |
 
 ## Before next week
 
-- Finish the lab notebook; one paragraph on what the bottleneck was and what finally removed it.
+- Finish the lab notebook; one paragraph on what the bottleneck was and which step finally removed it.
 - Submit the Project 2 proposal.
-- Read: PyTorch `DataLoader` docs (the `num_workers`, `pin_memory`, `prefetch_factor` sections) and the PyTorch profiler recipe.
+- Read: the official data-loading tutorial (the steps you did not reach) and the `DataLoader` docs warnings.
 - Think ahead: with 2 GPUs, how does each one get different data? (Week 11.)
 
-## Readings and references
+## References
 
-- PyTorch docs: `torch.utils.data` (`DataLoader`, `IterableDataset`, `get_worker_info`), the "pin_memory and non_blocking" tutorial, the profiler recipe.
-- WebDataset and Apache Arrow / Parquet documentation (brief).
-- NVIDIA DALI documentation (pointer only).
+- PyTorch, *Data Loading Optimization in PyTorch*; *`torch.utils.data`*; *A guide on good usage of `non_blocking` and `pin_memory()`*; *PyTorch Profiler* recipe; *Performance Tuning Guide* (links in the table above).
+- WebDataset, Apache Arrow / Parquet, NVIDIA DALI documentation (pointers only).
 - Course repo: Week 9 deck, Part VIII (streams) and the profiling section.
 
-## Open items to settle before building the deck
+## What I checked (before building the deck)
 
-- **Confirm the week number** (assumed Week 10). The README schedule still has the old numbering; a one-line schedule footer like Week 9's would do, or the README can be renumbered in a separate PR.
-- **Dataset for the lab.** Suggest CIFAR-10 or a generated image folder; the point is a realistic CPU cost per sample, not accuracy.
-- **Verify before teaching:** TensorBoard profiler plugin status on Colab; the Colab VM's core count and whether `prefetch_factor` and `persistent_workers` behave as described on the installed PyTorch version. Nothing in this outline has been run yet (no GPU in my environment).
+| Claim | Status |
+|---|---|
+| The official tutorial exists and has the ladder above, the shared-memory section and a `__getitems__` step | read the page (the end of the page came as a summary) |
+| Its reported speedups (about 3.4x workers, 1.0x pin, 1.1x persistent, 1.0x prefetcher, about 4x `__getitems__`) | from that read; hardware not stated; its own summary table may differ, so re-run before quoting |
+| Three overlap requirements; manual `pin_memory()` up to 2x slower; the two hazards | pinmem page (hazards and numbers read directly; the requirements came from a summary) |
+| `in_order` and its warning; `forkserver` on Python 3.14+; `prefetch_factor` and `persistent_workers` semantics; `__getitems__` hook | PyTorch source docstrings on `main`; check they match the PyTorch version on Colab |
+| Hidden-sync list, `set_to_none`, `cudnn.benchmark` | tuning guide (partial read); re-read before teaching |
+| An earlier suggestion that the lab would run baseline about 25 s, workers about 13 s, `__getitems__` about 1 s (32x), and that caching gives 5-10x | **not from any page**; the official page reports about 4x for `__getitems__`. Treat as untested predictions, measure on the T4 |
+| Worker seeding and memory-growth warnings | pointer to the docs' randomness notes; not read |
+| TensorBoard profiler plugin status | not mentioned on the recipe page I read; deck uses Perfetto |
+
+Nothing here has been run (no GPU in my environment).
+
+## Open items
+
+- **Confirm the week number** (assumed Week 10). A schedule footer like Week 9's would cover it, or the README can be renumbered in a separate PR.
+- Run the official tutorial on a Colab T4 first, and record the Python and PyTorch versions and `os.cpu_count()`.
