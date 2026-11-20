@@ -171,8 +171,41 @@ def fig_hidden_sync():
     return fig
 
 
+def fig_four_cases():
+    """The 2x2 of the official non_blocking guide: pageable/pinned x default/side stream."""
+    fig, ax = blank((9.4, 5.0), (0, 19.4), (-0.8, 10.4))
+    cases = [  # (title, copy lane, copy start, overlap?, verdict)
+        ("pageable, default stream", 0, False, "serial"),
+        ("pinned, default stream", 0, False, "serial"),
+        ("pageable, side stream", 1, False, "still blocks"),
+        ("pinned, side stream", 1, True, "overlap"),
+    ]
+    u = 0.9
+    for i, (title, lane, ov, verdict) in enumerate(cases):
+        cx = 0.3 + (i % 2) * 9.6
+        cy = 5.4 if i < 2 else 0.1
+        ec = GREEN if ov else GRAY
+        box(ax, cx, cy, 9.0, 4.6, fc="white", ec=ec, lw=1.6 if ov else 1.0, r=0.2)
+        ax.text(cx + 0.3, cy + 4.05, title, fontsize=10.5, weight="bold", color=INK)
+        top, bot = cy + 2.5, cy + 1.2
+        if lane == 1:
+            ax.text(cx + 2.0, top + 0.4, "side", ha="right", va="center", fontsize=8.5, color=INK)
+        ax.text(cx + 2.0, bot + 0.4, "stream 0", ha="right", va="center", fontsize=8.5, color=INK)
+        if ov:
+            box(ax, cx + 2.2, top, 2.6 * u, 0.8, "copy", fc=GREEN_L, ec=GREEN, fs=8.5)
+            box(ax, cx + 2.2, bot, 6.0 * u, 0.8, "kernel", fc=BLUE_L, ec=BLUE, fs=8.5)
+        else:
+            y = bot if lane == 0 else top
+            box(ax, cx + 2.2, y, 2.6 * u, 0.8, "copy", fc=GREEN_L, ec=GREEN, fs=8.5)
+            box(ax, cx + 2.2 + 2.6 * u, bot, 3.4 * u, 0.8, "kernel", fc=BLUE_L, ec=BLUE, fs=8.5)
+        ax.text(cx + 8.8, cy + 0.45, verdict, ha="right", fontsize=10, weight="bold", color=GREEN if ov else RED)
+    ax.text(9.7, -0.5, "schematic of the official guide's four profiler traces (block widths are illustrative)",
+            ha="center", fontsize=9.5, color=GRAY)
+    return fig
+
+
 FIGS = {"w10-idle-gpu": fig_idle_gpu, "w10-dataloader-path": fig_dataloader_path,
-        "w10-overlap": fig_overlap, "w10-hidden-sync": fig_hidden_sync}
+        "w10-overlap": fig_overlap, "w10-four-cases": fig_four_cases, "w10-hidden-sync": fig_hidden_sync}
 
 if __name__ == "__main__":
     png = Path(sys.argv[sys.argv.index("--png") + 1]) if "--png" in sys.argv else None
