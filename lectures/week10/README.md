@@ -16,7 +16,7 @@ Run them from this directory. Every configuration is checked to see the same dat
 | `04_hidden_syncs.py` | hidden syncs | `loss.item()` every step vs every N steps; data wait vs step time | runs on CPU, but the effect only shows on a GPU |
 | `05_profile_pipeline.py` | profiler | `torch.profiler` with `data_wait` labels, exported for Perfetto | runs on CPU |
 | `pipeline_utils.py` | all | synthetic dataset, `__getitems__` dataset, prefetcher, timed training loop | |
-| `make_figures.py` | all | regenerates the four `../img/w10-*.svg` figures (`python make_figures.py`; `--png DIR` for previews) | |
+| `make_figures.py` | all | regenerates the five `../img/w10-*.svg` figures (`python make_figures.py`; `--png DIR` for previews) | |
 
 Most scripts take size options; run with `--help`.
 
@@ -53,6 +53,11 @@ The deck was prepared without a GPU. Scripts `01`, `02`, `04` and `05` were run 
 | Hidden-sync list, `set_to_none`, `cudnn.benchmark` | official Performance Tuning Guide (part of it as a summary); re-read before teaching |
 | Random seeds differ per worker; Python-object datasets grow memory in workers | general guidance; the DataLoader docs' randomness notes were **not** read: check them before teaching this slide |
 | Profiler: `schedule`, `record_function`, `export_chrome_trace`; viewer | official Profiler recipe; the TensorBoard plugin was not mentioned on the page I read, so the deck uses Perfetto / Chrome trace |
+| `tf.data` code (`map` with `num_parallel_calls`, `cache`, `prefetch`, `AUTOTUNE`) and the toy timings (0.517 s sequential vs 0.395 s parallel map) | read from the official `tf.data` performance guide page; the deck's three-call chain is our own combination of the page's separate snippets |
+| Grain `MapDataset` chain, `ReadOptions(num_threads=16, prefetch_buffer_size=500)`; Hugging Face `with_format("torch")` + `DataLoader(num_workers=4)` | read from the Grain basic tutorial and the Hugging Face `use_with_pytorch` page |
+| JAX `ds.shard(... process_index())` example | read from the JAX distributed data loading page as a **summary**, not verbatim: re-check before teaching |
+| NVIDIA DALI example, "operators can run on the GPU", "plugs into PyTorch, TensorFlow and JAX" | the code is from a summary of DALI's *Pipeline mode* page; the GPU and framework claims are general knowledge, **not** read from the docs: check before teaching |
+| `w10-four-cases.svg` | our schematic of the four profiler traces the official `non_blocking` guide describes; we could not download the guide's own images |
 | Illustrative numbers (30 ms data + 50 ms GPU; 5 ms per call) | schematic: replace with the numbers from your own run |
 
 The 5 ms "fixed cost per call" in the synthetic dataset stands for per-call overhead (opening a file, calling a decoder). `__getitems__` helps because it pays that cost once per batch; real datasets benefit only if they can read or decode a batch in one go.

@@ -384,6 +384,13 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 <!-- _footer: "Official guide measures 0.375 ms for pageable.to(cuda) and 0.428 ms for pageable.pin_memory().to(cuda) on one 1M-float tensor." -->
 
 ---
+<!-- _footer: "Schematic of the four profiler traces in the official guide: pytorch.org/tutorials/intermediate/pinmem_nonblock.html" -->
+
+## 🔬 Four cases, one winner
+
+![h:500](img/w10-four-cases.svg)
+
+---
 
 ## ⚠️ A race on the PCIe bus
 
@@ -569,9 +576,174 @@ Not covered by the official tutorial, so just know the names:
 - 📁 **Many small files** are slow; large **shards** read sequentially are fast (WebDataset)
 - 🧮 **Parquet / Arrow** for tables, `np.memmap` for big arrays
 - 💾 **Cache** decoded, resized data once instead of decoding every epoch
-- 🖥️ **GPU-side** decode and augmentation (NVIDIA DALI)
+- 🖥️ **GPU-side** decode and augmentation (NVIDIA DALI, shown at the end)
 
 See each project's own documentation when you need them.
+
+---
+
+<!-- _class: lead -->
+
+# 🌍 Not only PyTorch
+
+---
+
+<style scoped>
+table { font-size: 21px; }
+table code { font-size: 18px; }
+.card { font-size: 21px; }
+.card h3 { font-size: 24px; }
+</style>
+
+## 🔁 The same three ideas everywhere
+
+<div class="cols3">
+<div class="card blue">
+
+### 🧵 Parallel work
+Decode and augment **many samples at once**, off the training thread
+
+</div>
+<div class="card green">
+
+### 🌊 Overlap
+Prepare batch *k+1* while the GPU runs batch *k* (**prefetch**)
+
+</div>
+<div class="card orange">
+
+### 💾 Reuse
+Do expensive work **once** and **cache** it
+
+</div>
+</div>
+
+| Idea | PyTorch `DataLoader` | `tf.data` (TensorFlow) |
+|---|---|---|
+| parallel per-sample work | `num_workers=N` | `.map(fn, num_parallel_calls=tf.data.AUTOTUNE)` |
+| overlap with training | `prefetch_factor`, `pin_memory` | `.prefetch(tf.data.AUTOTUNE)` |
+| reuse | cache decoded data yourself | `.cache()` |
+
+> 📏 The names change. **Measure the wait first** still applies.
+
+<!-- _footer: "Official guide: Better performance with the tf.data API (tensorflow.org/guide/data_performance)" -->
+
+---
+
+## 🟧 TensorFlow: `tf.data`
+
+<div class="cols">
+<div>
+
+```python
+dataset = (
+    dataset
+    .map(mapped_function,
+         num_parallel_calls=tf.data.AUTOTUNE)
+    .cache()
+    .prefetch(tf.data.AUTOTUNE)
+)
+```
+
+`AUTOTUNE` lets the runtime pick the parallelism and buffer sizes.
+
+</div>
+<div class="card gray">
+
+![w:520](img/w10-idle-gpu.svg)
+
+The tf.data guide draws the same picture: without `prefetch` the consumer waits for the producer.
+
+</div>
+</div>
+
+<!-- _footer: "Each call is shown on the guide's page; this chain is our combination of them. Guide's toy benchmark: sequential map 0.517 s, parallel map 0.395 s." -->
+
+---
+
+## 🟦 JAX and Hugging Face
+
+<div class="cols">
+<div class="card blue">
+
+### JAX: Grain
+
+```python
+dataset = (
+    grain.MapDataset.source(data)
+    .shuffle(seed=10)
+    .map(lambda x: x + 1)
+    .batch(batch_size=2)
+)
+```
+
+**Grain** is a data-loading library for JAX; its tutorial prefetches with Python threads (`ReadOptions(num_threads=16, prefetch_buffer_size=500)`).
+
+</div>
+<div class="card orange">
+
+### 🤗 `datasets`
+
+```python
+ds = Dataset.from_dict(
+    {"data": data, "label": label}
+).with_format("torch")
+dataloader = DataLoader(
+    ds, batch_size=32, num_workers=4)
+```
+
+Hugging Face datasets **plug into the `DataLoader` you know**; `streaming=True` reads without a full download.
+
+</div>
+</div>
+
+<!-- _footer: "Docs: google-grain.readthedocs.io (basic tutorial) · huggingface.co/docs/datasets (use_with_pytorch, stream)" -->
+
+---
+
+## 🟩 NVIDIA DALI: move the pipeline to the GPU
+
+<div class="cols">
+<div>
+
+```python
+@pipeline_def
+def simple_pipeline():
+    jpegs, labels = fn.readers.file(
+        file_root=image_dir)
+    images = fn.decoders.image(
+        jpegs, device="cpu")
+    return images, labels
+```
+
+</div>
+<div class="card green">
+
+🧩 A pipeline is a **graph of operators**: read, decode, augment.
+
+🚀 Operators can run on the **GPU**, which helps when CPU decoding is the bottleneck.
+
+🔌 It plugs into PyTorch, TensorFlow and JAX.
+
+</div>
+</div>
+
+<!-- _footer: "Example adapted from DALI's 'Pipeline mode' page: docs.nvidia.com/deeplearning/dali/user-guide/docs/" -->
+
+---
+
+## 🔗 Next week's link
+
+Each **JAX process** shards its own data, then the batches are assembled into one global array:
+
+```python
+ds = ds.shard(num_shards=jax.process_count(),
+              index=jax.process_index())
+```
+
+🔁 PyTorch does the same job with `DistributedSampler` (DDP, Weeks 11–12).
+
+<!-- _footer: "JAX docs: Distributed data loading (docs.jax.dev, 501/data-loading)" -->
 
 ---
 
@@ -634,6 +806,7 @@ Also report: Python and PyTorch versions, `os.cpu_count()`, and whether the GPU 
 - 🪜 **Climb the ladder in order and re-measure.** Some rungs give nothing.
 - 📦 The biggest lever is usually **less work per sample** (batched, cached, smaller dtypes), not more workers.
 - 🌊 Overlap needs a **pinned source, a side stream and a free copy engine**; `non_blocking` without a sync is a **race**.
+- 🌍 `tf.data`, Grain and DALI use the **same ideas** (parallel work, prefetch, cache) under other names.
 - 🕵️ **Hidden syncs** can make an idle GPU look like a slow loader. Trust the **trace**.
 
 ---
@@ -659,6 +832,7 @@ Also report: Python and PyTorch versions, `os.cpu_count()`, and whether the GPU 
 - PyTorch docs: [`torch.utils.data`](https://docs.pytorch.org/docs/stable/data.html) · [Performance Tuning Guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html)
 - PyTorch guide: [Good usage of `non_blocking` and `pin_memory()`](https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html)
 - PyTorch recipe: [Profiler](https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html) · viewer: [ui.perfetto.dev](https://ui.perfetto.dev)
+- Other libraries: [`tf.data` performance guide](https://www.tensorflow.org/guide/data_performance) · [Grain](https://google-grain.readthedocs.io/) · [🤗 datasets](https://huggingface.co/docs/datasets) · [NVIDIA DALI](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/) · [JAX distributed data loading](https://docs.jax.dev/en/latest/501/data-loading.html)
 - [Course repository](https://github.com/adaskin/hpc-for-ai-course) · scripts in `lectures/week10/`
 
 Figures `img/w10-*.svg` are drawn by `week10/make_figures.py`; see `img/CREDITS.md`.
