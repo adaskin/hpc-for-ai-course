@@ -1,4 +1,4 @@
-"""Week 9, Part VIII: CUDA streams, overlapping copies with compute.
+"""Week 9: CUDA streams, overlapping copies with compute.
 
 Serial:    upload everything -> run the kernel -> download everything
 Streams:   split into chunks; each chunk uploads, computes and downloads in its own

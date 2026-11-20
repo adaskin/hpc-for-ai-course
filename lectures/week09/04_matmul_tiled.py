@@ -1,4 +1,4 @@
-"""Week 9, Part IV: shared-memory tiling, and what happens when a barrier is removed.
+"""Week 9: shared-memory tiling, and what happens when a barrier is removed.
 
 Run:  python 04_matmul_tiled.py                 # correct kernel + verification
       python 04_matmul_tiled.py --race          # also run the two broken variants

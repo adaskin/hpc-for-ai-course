@@ -8,29 +8,31 @@ style: |
     font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
     font-size: 28px;
   }
-  section.lead {
-    text-align: center;
-  }
-  section.lead h1 {
-    font-size: 52px;
-  }
-  table {
-    font-size: 24px;
-  }
-  code {
-    font-size: 22px;
-  }
-  pre {
-    font-size: 20px;
-  }
-  img {
-    display: block;
-    margin: 0 auto;
-  }
-  footer {
-    font-size: 16px;
-    opacity: 0.5;
-  }
+  section.lead { text-align: center; }
+  section.lead h1 { font-size: 52px; }
+  table { font-size: 24px; }
+  code { font-size: 22px; }
+  pre { font-size: 19px; }
+  img:not(.emoji) { display: block; margin: 0 auto; }   /* emoji images stay inline */
+  footer { font-size: 16px; opacity: 0.5; }
+  /* html helpers: columns, cards, tags (render with html enabled) */
+  .cols  { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; align-items: start; }
+  .wide-left { display: grid; grid-template-columns: 1.5fr 1fr; gap: 22px; align-items: start; }
+  .card { border: 2px solid #cbd5e1; border-radius: 14px; padding: 6px 16px; background: #f8fafc; font-size: 24px; }
+  .card h3 { margin: 4px 0; font-size: 28px; }
+  .card p { margin: 4px 0; }
+  .blue   { border-color: #2f6fb0; background: #e6eef8; }
+  .orange { border-color: #e08a1e; background: #fbeedb; }
+  .green  { border-color: #2e7d5b; background: #e6f2ec; }
+  .red    { border-color: #b3402f; background: #f7e4e0; }
+  .gray   { border-color: #6b7280; background: #eef0f3; }
+  .big    { font-size: 36px; }
+  .small  { font-size: 21px; }
+  .tag { display: inline-block; padding: 0 12px; border-radius: 12px; background: #2f6fb0; color: white; font-size: 20px; }
+  .tag.orange { background: #e08a1e; border: 0; }
+  .tag.green  { background: #2e7d5b; border: 0; }
+  .tag.red    { background: #b3402f; border: 0; }
 ---
 
 <!-- _class: lead -->
@@ -38,7 +40,7 @@ style: |
 
 # YZM 513 – High-Performance Programming for AI
 
-### Week 9: The CUDA Memory Hierarchy & Profiling
+### Week 9: The CUDA Memory Hierarchy & Profiling 🏛️
 ### Coalescing, shared memory, tiling, reductions
 
 **İstanbul Medeniyet Üniversitesi**
@@ -48,24 +50,38 @@ Ammar Daşkın
 
 ---
 
-# Review: kernel function
+## 🔁 Review: the kernel function
 
-Kernel function: a gpu function meant to be called by the CPU code.
-- kernels cannot explicitly return values
-  - all results must be written to an array passed to the function
-  - kernels explicitly declare their thread hierarchy when called
-    -  the number of blocks
-    -  the number of threads per block
-    -  the kernel can be called multiple times with different block or grid sizes
-  
-[https://nvidia.github.io/numba-cuda/user/kernels.html](https://nvidia.github.io/numba-cuda/user/kernels.html)
+<div class="cols">
+<div class="card blue">
+
+### 🧩 What it is
+A GPU function **meant to be called from CPU code**.
+
+- cannot explicitly **return** values
+- results are written into an **array passed to the function**
+
+</div>
+<div class="card orange">
+
+### 🚀 How you launch it
+The **thread hierarchy is declared at the call**:
+
+- the number of **blocks**
+- the number of **threads per block**
+- the same kernel can be launched many times with different sizes
+
+</div>
+</div>
+
+📖 [Numba CUDA: Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html)
 
 ---
 
-## Thread positioning in kernel function
-- When running a kernel, the kernel function’s code is executed by every thread once. 
+## 🧭 Thread positioning: every thread runs the same code
 
----
+When a kernel runs, **every thread executes the kernel function's code once**.
+
 ```C
 __global__ void vecAdd(float* A, float* B, float* C, int vectorLength){
      // calculate which element this thread is responsible for computing
@@ -87,9 +103,11 @@ int main(){
     ...
 }
 ```
+
 ---
 
-## Cuda Python
+## 🐍 Launching a kernel from Python
+
 ```python
 from numba import cuda
 
@@ -100,11 +118,10 @@ def my_kernel(input, output):
 ## launch the kernel
 my_kernel[num_thread_blocks, threads_per_block](in_array, out_array)
 ```
----
-## Multi dimensional grids and Thread Blocks
-```python
-from numba import cuda
 
+### Multi-dimensional grids and thread blocks
+
+```python
 @cuda.jit
 def function(input, output):
     ...
@@ -114,6 +131,8 @@ function[(gridX, gridY), (blockX, blockY)](in_array, out_array)
 ```
 
 ---
+
+## 🧮 Manual thread positioning
 
 ```python
 # manual positioning
@@ -133,6 +152,8 @@ def increment_by_one(an_array):
 
 ---
 
+## 🎯 `cuda.grid`: let Numba do the arithmetic
+
 - `numba.cuda.grid(ndim)` returns absolute position of the current thread in the entire grid blocks
 - `numba.cuda.gridsize(ndim)` returns the absolute size (or shape) in threads of the entire grid of blocks
   
@@ -150,9 +171,12 @@ def increment_a_2D_array(an_array):
     if x < an_array.shape[0] and y < an_array.shape[1]:
        an_array[x, y] += 1
 ```
+
 ---
 
-# Review: Memory Management
+## 🔁 Review: memory management
+
+**In C**, unified memory:
 
 ```C
  // Use unified memory to allocate buffers in C
@@ -160,7 +184,8 @@ def increment_a_2D_array(an_array):
     cudaMallocManaged(&B, vectorLength*sizeof(float));
     cudaMallocManaged(&C, vectorLength*sizeof(float));
 ```
----
+
+**In Numba**, device arrays:
 
 ```python
 #an empty device array
@@ -174,6 +199,9 @@ numba.cuda.to_device(obj, stream=0, copy=True, to=None)
 [https://nvidia.github.io/numba-cuda/user/memory.html](https://nvidia.github.io/numba-cuda/user/memory.html)
 
 ---
+
+## 🔄 Copying to and from the device
+
 ```python
 ary = np.arange(10)
 d_ary = cuda.to_device(ary)
@@ -187,11 +215,12 @@ hary = d_ary.copy_to_host()
 ary = np.empty(shape=d_ary.shape, dtype=d_ary.dtype)
 d_ary.copy_to_host(ary)
 ```
+
 ---
 
 <!-- _footer: "Schedule note: original syllabus Week 8 topic, taught in Week 9." -->
 
-## Where we are
+## 🗺️ Where we are
 
 ```text
 Week 1–2   one core, made fast        vectorise, Numba, BLAS
@@ -207,39 +236,55 @@ Week 13    deployment                 torch.compile
 ```
 
 ---
-## The week in one sentence
 
-> A kernel is fast when **each byte fetched from VRAM is used many times**.
->
-> Tiling is how you arrange that.
-> Profiling is how you prove it worked.
->
+## 🎯 The week in one sentence
+
+<div class="card blue big">
+
+A kernel is fast when **each byte fetched from VRAM is used many times.**
+
+</div>
+
+🧱 **Tiling** is how you arrange that.
+🔬 **Profiling** is how you prove it worked.
+
 ---
 
+## 🧭 Today's arc
 
-## Today's arc
+Everything starts from the **memory hierarchy**.
 
-The memory hierarchy 
-We will see in details
-- **Coalescing** 
+<div class="cols">
+<div class="card green">
+
+### 🔬 In detail
+- **Coalescing**
 - **Shared memory + tiling**
 
-We will just go through briefly (just know what it is)
-- Reductions (softmax redeemed) 
-- Occupancy 
-- Profiling 
-- Streams: overlap copies and compute  
-- Lab + wrap 
+</div>
+<div class="card gray">
+
+### 👀 Briefly (know what it is)
+- Reductions (softmax redeemed)
+- Occupancy
+- Profiling
+- Streams: overlap copies and compute
+- Lab + wrap-up
+
+</div>
+</div>
 
 ---
 
 <!-- _class: lead -->
 
-# Hardware Review: How the GPU actually executes your grid
+# 🔧 Hardware review
+
+### How the GPU actually executes your grid
 
 ---
 
-## From Python grid to physical silicon
+## 🧱 From Python grid to physical silicon
 
 When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierarchy onto physical units:
 
@@ -254,32 +299,50 @@ When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierar
 
 ---
 
-## The Warp: the true unit of execution
+## 🧵 The warp: the true unit of execution
 
 - The SM does **not** schedule individual threads; it schedules **warps** (groups of **32 consecutive threads**).
 - **Memory consequences:** Whenever a warp executes a load instruction, all 32 lanes issue their memory requests **together**.
   - *Global memory:* 32 requests are merged into cache lines (**coalescing**).
   - *Shared memory:* 32 requests hit 32 memory modules simultaneously (**banks**).
-- **Latency hiding:** When Warp A stalls waiting on slow VRAM (~500 cycles), the SM switches to Warp B in **0 cycles**—if enough warps are resident (**occupancy**, Part VI).
+- **Latency hiding:** When Warp A stalls waiting on slow VRAM (~500 cycles), the SM switches to Warp B in **0 cycles**—if enough warps are resident (**occupancy**, later today).
 
 ---
 
-## Why hardware matters today
+## 💡 Why hardware matters today
 
-1. **Compute is cheap, memory is far:** An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
-2. **Blocks stay put:** Because a block lives on **one SM**, its threads can share the SM's fast on-chip SRAM.
-3. **32 is the magic number:** Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
+<div class="cols3">
+<div class="card blue">
+
+### 🚰 Compute is cheap, memory is far
+An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
+
+</div>
+<div class="card orange">
+
+### 📍 Blocks stay put
+A block lives on **one SM**, so its threads can share the SM's fast on-chip SRAM.
+
+</div>
+<div class="card green">
+
+### 🔢 32 is the magic number
+Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
+
+</div>
+</div>
 
 Keep these three numbers in mind as we start counting bytes.
 
 ---
 
-## GPU  Device Memory Types and Locations
+## 🗂️ GPU device memory types and locations
 ![memory types](img/w09-memory-types-scope.png)
 [https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
 
 ---
-## Global Memory
+
+## 🌍 Global memory
 
 ```python
 @cuda.jit
@@ -291,7 +354,7 @@ A, B, and C are in global memory and are being accessed by this vector add kerne
 
 ---
 
-## Shared Memory
+## 🤝 Shared memory
 ```python
 @cuda.jit
 def example_syncthreads(input_data, output_data):
@@ -310,33 +373,35 @@ def example_syncthreads(input_data, output_data):
 
 ---
 
-## Static allocation of Shared Memory
+## 📐 Shared memory: static and dynamic allocation
+
+### Static allocation
 ```python
 from numba import cuda
 import numpy as np
 
 shared_array = cuda.shared.array(shape=1024, dtype=np.float32)
 ```
-## Dynamic Allocation of Shared Memory
+### Dynamic allocation
 
 ```python
 from numba import cuda
 import numpy as np
 
 ## setting shape=0 indicates that this array will be dynamically sized by the kernel launch's execution configuration
-shared_array = cuda.shared.array(shape=0, type=np.float32)
+shared_array = cuda.shared.array(shape=0, dtype=np.float32)
 ```
 
 ---
 
-## Registers
+## ⚡ Registers
 - Registers are located on the SM and have thread local scope.
 - Register usage is managed by the compiler
 - registers are used for thread local storage during the execution of a kernel.
 
 ---
 
-## Local Memory
+## 🏷️ Local memory
 Local memory is thread local storage similar to registers and managed by NVCC, but the physical location of local memory is in the global memory space. 
 - The ‘local’ label refers to its logical scope, not its physical location.
 
@@ -350,10 +415,13 @@ Local memory is used for thread local storage during the execution of a kernel. 
 
 ---
 
+## 🐌 Local memory is as slow as global memory
+
 > Because the local memory space resides in device memory, local memory accesses have the same latency and bandwidth as global memory accesses and are subject to the same requirements for memory coalescing
 
 ---
-## Constant Memory
+
+## 🧊 Constant memory
 - Constant memory has grid scope and is accessible for the lifetime of the application. 
 - The constant memory resides on the device and is read-only to the kernel.
 ```python
@@ -367,6 +435,8 @@ const_array = numba.cuda.const.array_like(ary) # within the kernel code
 
 ---
 
+## 🧊 Constant memory in code
+
 ```python
 from numba import cuda
 import numpy as np
@@ -375,25 +445,27 @@ host_array = np.zeros(128, dtype=np.float32)
 ## fill host_array with other data
 
 @cuda.jit
-def kernel(args):
-    ...
-
-    const_array = cuda.const.array_like(a)
+def kernel(out):
+    # created from the host array when the kernel is compiled
+    const_array = cuda.const.array_like(host_array)
 
     # this access now goes through constant memory
-    a = const_array[cuda.threadIdx.x]
+    out[cuda.threadIdx.x] = const_array[cuda.threadIdx.x]
 ```
-> Constant memory is useful for small amounts of data that each thread will use in a read-only fashion. 
+> Constant memory is useful for small amounts of data that each thread will use in a read-only fashion.
+
 ---
 
-## Caches
+## 🗃️ Caches
 - GPU devices have a multi-level cache structure which includes L2 and L1 caches.
 - L1 cache is physically located on each SM and is the same physical space used by shared memory. If no shared memory is utilized by a kernel, the entire physical space will be utilized by the L1 cache.
 - The L2 and L1 caches can be controlled via functions that allow the developer to specify various caching behaviors
 
 ---
 
-## Inside a Streaming Multiprocessor (SM)
+<style scoped>section{font-size:24px} pre{font-size:15px;line-height:1.15}</style>
+
+## 🏭 Inside a Streaming Multiprocessor (SM)
 
 Every SM is an independent mini-processor with its own compute units and **on-chip memory**:
 
@@ -420,23 +492,24 @@ Every SM is an independent mini-processor with its own compute units and **on-ch
 
 ---
 
-# Memory Performance
+## 🚚 Memory performance: 32-byte transactions
 
-- Global memory is accessed via 32-byte memory transactions. 
-> - When a CUDA thread requests a word of data from global memory, the relevant warp coalesces the memory requests from all the threads in that warp into the number of memory transactions necessary to satisfy the request, depending on the size of the word accessed by each thread and the distribution of the memory addresses across the threads.
+- Global memory is accessed via **32-byte memory transactions**.
+- When a thread requests a word, the warp **coalesces** the requests of all its threads into the number of transactions needed, depending on the **word size** and on how the **addresses are spread** across the threads.
 
-> - **if a thread requests a 4-byte word, the actual memory transaction the warp will generate to global memory will be 32 bytes in total.** 
+> **If a thread requests a 4-byte word, the memory transaction the warp generates to global memory is 32 bytes in total.**
 
--  To use the memory system most efficiently, the warp should use all the memory that is fetched in a single memory transaction
-- 
+➡️ To use the memory system efficiently, the warp should **use all the bytes** fetched in a single transaction.
+
 ---
 
-## Coalesced Memory Access
+## ✅ Coalesced memory access
 
-![coalesced](img/w09-coalesced-memory-access.png)
-[https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
+![w:860](img/w09-coalesced-memory-access.png)
 
-## Defines a CUDA kernel to perform C = A + B vector addition
+<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" -->
+
+**A simple coalesced kernel** (C = A + B vector addition):
 ```python
 @cuda.jit
 def vecadd(A, B, C):
@@ -446,13 +519,15 @@ def vecadd(A, B, C):
 - simple coalesced access
 
 ---
-### Worst Case
+
+## ❌ Worst case: strided access
 
 the pathologically worst case scenario is when consecutive threads access data elements that are 32 bytes or more apart from each other in memory. In this case, the warp will be forced to issue a 32-byte memory transaction for each thread, and the total number of bytes of memory traffic will be 32 bytes times 32 threads/warp = 1024 bytes.
-![coalesced worst case](img/w09-coalesced-worst-case.png)
+![w:860](img/w09-coalesced-worst-case.png)
 
 ---
-## Matrix transpose kernel, one thread per matrix element launched with 
+
+## 🔄 Matrix transpose in CUDA C
 
 ```C
 /* macro to index a 1D memory array with 2D indices in row-major order */
@@ -474,47 +549,84 @@ __global__ void cuda_transpose(int m, float *a, float *c ){
 
 ---
 
+## 🔄 The transpose access pattern
+
 ![alt text](img/w09-matrix-transpose.png)
 
 ---
 
-- In a 2d thread block, the `x` index moves the fastest, so consecutive values of `threadIdx.x` should be accessing consecutive elements of memory. 
-- `threadIdx.x` appears in `myCol`, and when `myCol` is the second argument to the `INDX` macro, consecutive threads are reading consecutive values of `a`, so the read of `a` is perfectly coalesced.
+## 🔍 Which transpose access is coalesced?
 
----
-the writing of c is not coalesced, 
-- because consecutive values of threadIdx.x (again examine myCol) are writing elements to `c` that are `ld` (leading dimension) elements apart from each other.
-- because `myCol` is the first argument to the `INDX` macro, and as the first argument to `INDX` increments by 1, the memory location changes by `ld`. When `ld` is larger than 32 (which occurs whenever the matrix sizes are larger than 32), 
-- this is equivalent to the pathological case
+<div class="cols">
+<div class="card green">
 
----
-> To alleviate these uncoalesced writes, the use of shared memory can be employed, which will be described in the next section.
+### ✅ Read of `a`: coalesced
+In a 2D thread block, `x` moves fastest, so consecutive `threadIdx.x` should access consecutive memory.
 
----
+`threadIdx.x` appears in `myCol`, the **second** argument of `INDX`: consecutive threads read consecutive values of `a`.
 
-## Shared Memory Access Patterns
+</div>
+<div class="card red">
 
-- Shared memory has 32 banks that are organized such that successive 32-bit words map to successive banks. 
-- Each bank has a bandwidth of 32 bits per clock cycle.
+### ❌ Write of `c`: not coalesced
+`myCol` is the **first** argument of `INDX`: when it grows by 1, the address changes by `ld` (the leading dimension).
 
-> When multiple threads in the same warp attempt to access different elements in the same bank, a bank conflict occurs
-> - the access to the data in that bank will be serialized until the data in that bank has been obtained by all the threads that have requested it.
+Consecutive threads write elements `ld` apart. When `ld` is larger than 32 (any matrix larger than 32), this is the **pathological case**.
 
----
+</div>
+</div>
 
-The two exceptions to this scenario happen when multiple threads in the same warp are accessing (either reading or writing) the same shared memory location.
--  For read accesses, the word is broadcast to the requesting threads. 
--  For write accesses, each shared memory address is written by only one of the threads (which thread performs the write is undefined).
-  
+💡 To alleviate the uncoalesced writes, use **shared memory** (next slides).
 
 ---
 
-![alt text](img/w09-shared-memory-access.png)
-- Left:    Linear addressing with a stride of one 32-bit word (no bank conflict). 
-- Middle:    Linear addressing with a stride of two 32-bit words (two-way bank conflict). 
-- Right:    Linear addressing with a stride of three 32-bit words (no bank conflict). 
-[https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html)
+## 🏦 Shared memory banks
+
+<div class="cols">
+<div class="card blue">
+
+### 🧱 How it is organised
+- **32 banks**; successive 32-bit words map to successive banks
+- each bank serves **32 bits per clock cycle**
+
+⚠️ When threads of a warp access **different words in the same bank**, a **bank conflict** occurs: the accesses to that bank are **serialized**.
+
+</div>
+<div class="card green">
+
+### ✅ Two exceptions
+Several threads of a warp access the **same shared-memory location**:
+
+- **read**: the word is **broadcast** to the requesting threads
+- **write**: each address is written by only one of the threads (which one is undefined)
+
+</div>
+</div>
+
 ---
+
+## 🏦 Bank access patterns
+
+<div class="cols">
+<div>
+
+![h:500](img/w09-shared-memory-access.png)
+
+</div>
+<div class="small">
+
+- **Left:** linear addressing with a stride of one 32-bit word (**no** bank conflict).
+- **Middle:** linear addressing with a stride of two 32-bit words (**two-way** bank conflict).
+- **Right:** linear addressing with a stride of three 32-bit words (**no** bank conflict).
+
+</div>
+</div>
+
+<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" -->
+
+---
+
+## 🔁 Transpose staged through shared memory
 
 ```python
 import numpy as np
@@ -538,7 +650,10 @@ def smem_transpose(a, c):
     c[(tile_col + cuda.threadIdx.y, tile_row + cuda.threadIdx.x)] = smemArray[(cuda.threadIdx.y, cuda.threadIdx.x)]
 
 ```
+
 ---
+
+## 🔁 What the tile copy does
 
 -  Each thread in the same thread block has the same tileRow and tileCol values,
 -  The kernel then proceeds with each thread block copying a 32 x 32 tile of the matrix from global memory to shared memory
@@ -550,18 +665,42 @@ def smem_transpose(a, c):
 
 ---
 
-A common fix to avoid bank conflicts is to pad the shared memory by adding one to the column dimension of the array as follows:
-- smemArray = cuda.shared.array(shape=(32, 32 + 1), dtype=np.float32)
+## 🩹 Padding removes bank conflicts
 
-![w0-transpose-1](img/w09-transpose-1.png)
-The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.
+A common fix is to pad the shared memory by adding one to the column dimension:
 
-![w0-transpose-1 padded](img/w09-transpose-2.png)
-<!-- _class: lead -->
+`smemArray = cuda.shared.array(shape=(32, 32 + 1), dtype=np.float32)`
+
+<div class="cols">
+<div>
+
+**Unpadded**
+
+![h:250](img/w09-transpose-1.png)
+
+</div>
+<div>
+
+**Padded (+1 column)**
+
+![h:250](img/w09-transpose-2.png)
+
+</div>
+</div>
+
+<span class="small">The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.</span>
 
 ---
 
-# Performance Diagnosis by Counting the Bytes
+<!-- _class: lead -->
+
+# 📏 Counting the bytes
+
+### Performance diagnosis
+
+---
+
+## 🐢 Your `vector_add` kernel: the memory wall
 
 Your `vector_add` kernel (week08):
 
@@ -576,7 +715,7 @@ That was not a bug. That was the memory wall.
 
 ---
 
-## The only diagnostic you need first
+## 🩺 The only diagnostic you need first
 
 $$\text{arithmetic intensity} = \frac{\text{FLOPs}}{\text{bytes moved from VRAM}}$$
 
@@ -587,15 +726,23 @@ T4: 8,100 GFLOP/s ÷ 320 GB/s ≈ **25 FLOP/byte** — the *ridge point*.
 
 ---
 
-![tiled vs simt](img/w09-tile-vs-simt.png)
-**tile space:** conceptually partitioning an array into equally sized, non-overlapping tiles. 
-[https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
+## 🧩 Tile space
+
+![h:400](img/w09-tile-vs-simt.png)
+
+**Tile space:** conceptually partitioning an array into equally sized, non-overlapping tiles.
+
+<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" -->
 
 ---
-![tile space](img/w09-tile-space.png)
-a two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles
 
-[https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html](https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html)
+## 🧩 Tile space: how an array is divided
+
+![h:410](img/w09-tile-space.png)
+
+<span class="small">A two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles.</span>
+
+<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" -->
 
 ---
 
@@ -605,7 +752,7 @@ a two-dimensional array of shape (M, N). If a load operation specifies a tile sh
 
 ---
 
-## Naive matmul: what does one thread read?
+## 🐢 Naive matmul: what does one thread read?
 
 ```python
 col, row = cuda.grid(2)
@@ -619,7 +766,7 @@ Each output reads a whole row of A and a whole column of B.
 
 **Every element of A is read by N different threads.**
 
-The accesses themselves are coalesced (Part III); the problem here is **no reuse**.
+The accesses themselves are coalesced (see *Coalescing*); the problem here is **no reuse**.
 
 ---
 
@@ -627,10 +774,12 @@ The accesses themselves are coalesced (Part III); the problem here is **no reuse
 
 ---
 
-## Example: 4×4 matmul with 2×2 tiles
+<style scoped>section{font-size:25px} pre{font-size:16px}</style>
 
-Suppose we compute \(C = A \times B\) for \(N = 4\), using **2×2 thread blocks** (\(T = 2\)).
-To compute the top-left 2×2 tile of \(C\) (`C[0:2, 0:2]`):
+## 🧮 Example: 4×4 matmul with 2×2 tiles
+
+Suppose we compute $C = A \times B$ for $N = 4$, using **2×2 thread blocks** ($T = 2$).
+To compute the top-left 2×2 tile of $C$ (`C[0:2, 0:2]`):
 
 ```text
       A (4×4)                    B (4×4)                    C (4×4)
@@ -666,7 +815,9 @@ Instead of each thread reading a full row and column from VRAM, the 4 threads ma
 
 ---
 
-## Numerical walkthrough: Phase 0 & Phase 1
+<style scoped>section{font-size:23px} pre{font-size:15px}</style>
+
+## 🔢 Numerical walkthrough: Phase 0 & Phase 1
 
 **Phase 0:** Each thread loads **1 element** of `Tile A0` and **1 element** of `Tile B0` into shared memory (`sA`, `sB`), then calls `cuda.syncthreads()`:
 
@@ -691,7 +842,7 @@ sA = [ 3  4 ]      sB = [ 4  1 ]      Final sums (partial + new):
 
 ---
 
-## Counting the savings on this 4×4 example
+## 💰 Counting the savings on this 4×4 example
 
 Compare how many global memory reads **Block (0, 0)** performs to compute its 4 outputs:
 
@@ -705,7 +856,7 @@ Compare how many global memory reads **Block (0, 0)** performs to compute its 4 
 
 ---
 
-## Count it (float32, no reuse)
+## 🧾 Count it (float32, no reuse)
 
 | N | GB read | GFLOP | FLOP/byte | ms @320 GB/s | ms of arithmetic |
 |---:|---:|---:|---:|---:|---:|
@@ -719,15 +870,14 @@ The arithmetic needs **0.27 ms**. The bytes need **26.8 ms**.
 
 ---
 
-## Two caveats
+## ⚠️ Two caveats
 
 - This is a **no-reuse model**. The L1 and L2 caches catch some of the repeated reads, so the real naive kernel can be faster than 26.8 ms.
 - The *shape* of the argument is right: moving the bytes takes ~100× longer than the arithmetic, so bandwidth, not FLOPs, is the limit.
 
-
 ---
 
-## The fix, in one sentence
+## 🔧 The fix, in one sentence
 
 > Load a piece of A and a piece of B into **fast on-chip memory once**,
 > and let many threads reuse them.
@@ -736,7 +886,7 @@ That is **tiling**.
 
 ---
 
-## The four questions, refined
+## ❓ The four questions, refined
 
 | Question | Week 8 | Today |
 |---|---|---|
@@ -747,7 +897,7 @@ That is **tiling**.
 
 ---
 
-## A new rung on cost ladder
+## 🪜 A new rung on the cost ladder
 
 ```text
 registers        ~1 cycle          ← the compiler manages these
@@ -767,8 +917,7 @@ Week 9: *move the data to fast memory, once, and reuse it.*
 
 <!-- _class: lead -->
 
-# Part II
-# The memory hierarchy
+# 🏛️ The memory hierarchy
 
 ---
 
@@ -776,7 +925,7 @@ Week 9: *move the data to fast memory, once, and reuse it.*
 
 ---
 
-## The spaces, by scope
+## 🗺️ The spaces, by scope
 
 | Space | Visible to | Lives as long as |
 |---|---|---|
@@ -790,7 +939,7 @@ Scope is not a detail. It decides what can cooperate with what.
 
 ---
 
-## Who manages it
+## 👷 Who manages it
 
 | Managed by hardware | Managed by **you** |
 |---|---|
@@ -801,12 +950,11 @@ Scope is not a detail. It decides what can cooperate with what.
 > Shared memory is a **user-managed cache**: you decide what to keep in it.
 > (CUDA C++ Best Practices Guide, *Shared Memory*.)
 
-
 ---
 
----
+<style scoped>section{font-size:24px}</style>
 
-## "local" means scope, not location
+## 🏷️ "local" means scope, not location
 
 In CUDA, **"local"** describes *who can see it* (private to one thread), **not** *where it sits on the chip*:
 
@@ -815,13 +963,13 @@ In CUDA, **"local"** describes *who can see it* (private to one thread), **not**
 
 **When does slow local memory happen?**
 1. **Register spilling:** Your thread uses too many variables, so excess registers overflow into VRAM.
-2. **Dynamic indexing:** You create a small per-thread array (`cuda.local.array`) and index it with a variable (`arr[i]`) instead of a constant (`arr`).
+2. **Dynamic indexing:** You create a small per-thread array (`cuda.local.array`) and index it with a variable (`arr[i]`) instead of a constant (`arr[0]`).
 
 *Check it:* `kernel_resources()` in `gpu_utils.py` prints `spill bytes` — any number above `0` means hidden VRAM traffic.
 
 ---
 
-## Why shared memory is worth the trouble
+## 💎 Why shared memory is worth the trouble
 
 Every SM has its own fast on-chip shared memory, so bandwidth scales across all SMs in parallel:
 
@@ -838,7 +986,7 @@ That is **~25× more bandwidth** than VRAM—*provided* threads don't stall on b
 
 ---
 
-## Scope binds scheduling
+## 🔗 Scope binds scheduling
 
 - A block's shared memory is allocated on **one SM**.
 - Therefore a block cannot migrate, and `cuda.syncthreads()` can only
@@ -851,11 +999,11 @@ Need a grid-wide boundary? **Launch a second kernel.**
 
 <!-- _class: lead -->
 
-# Coalescing
+# 🧱 Coalescing
 
 ---
 
-## What the hardware actually fetches
+## 📦 What the hardware actually fetches
 
 - Global memory is served in **aligned 32-byte sectors** (four of them make a 128-byte cache line).
 - A warp's 32 requests are merged into as few sectors as possible.
@@ -870,7 +1018,7 @@ fetched are useful: **8× less effective bandwidth**.
 
 ---
 
-## The arithmetic of waste
+## 🗑️ The arithmetic of waste
 
 **Coalesced** — lane *i* reads `a[i]`:
 32 lanes × 4 B = 128 B, in 4 sectors of 32 B. **100 % used.**
@@ -882,7 +1030,7 @@ Same instructions. Same useful bytes. Eight times the traffic.
 
 ---
 
-## Predict before we run
+## 🔮 Predict before we run
 
 A 4096 × 4096 float32 matrix (64 MiB), stored row-major.
 
@@ -895,7 +1043,7 @@ Same FLOPs. Same total bytes.
 
 ---
 
-## Kernel A: one thread per row
+## 🐌 Kernel A: one thread per row
 
 ```python
 @cuda.jit
@@ -913,7 +1061,7 @@ But at step `c`, consecutive lanes read `A[i, c]`, `A[i+1, c]`, ... : **N floats
 
 ---
 
-## Kernel B: one thread per column
+## 🚀 Kernel B: one thread per column
 
 ```python
 @cuda.jit
@@ -932,7 +1080,7 @@ The thread that *looks* less natural is the fast one.
 
 ---
 
-## Run it
+## ▶️ Run it
 
 ```bash
 python 02_coalescing.py            # prints ms, achieved GB/s and % of peak for both kernels
@@ -947,6 +1095,7 @@ python 02_coalescing.py            # prints ms, achieved GB/s and % of peak for 
 
 ---
 
+## 🤔 The surprise: almost the same time
 
 **The prediction:** `col_sums` (coalesced) should beat `row_sums` (strided) by a clear margin.
 
@@ -963,8 +1112,7 @@ Modern GPUs are very good at the friendly case.
 
 ---
 
-
-## The same lesson, different spelling: AoS vs SoA
+## 🧬 The same lesson, different spelling: AoS vs SoA
 
 ```python
 # Array of Structs: stride between lanes
@@ -979,7 +1127,7 @@ not a list of records. Now you know why.
 
 ---
 
-## The natural C layout: Array of Structs
+## 📚 The natural C layout: Array of Structs
 
 ```c
 struct Particle {
@@ -992,9 +1140,10 @@ addr:   0    4    8   12   16   20   24   28  ...
         x0   y0   z0   x1   y1   z1   x2   y2  ...
         └────particle 0────┘└────particle 1───┘
 ```
+
 ---
 
-## The other layout: Struct of Arrays
+## 🧱 The other layout: Struct of Arrays
 
 ```c
 float x[N], y[N], z[N];
@@ -1010,8 +1159,7 @@ One contiguous field per array. Access is `x[i], y[i], z[i]`.
 
 ---
 
-
-## The stride between lanes
+## 📏 The stride between lanes
 
 Almost every GPU kernel is *"`thread-i` handles `element-i`."*
 Suppose each thread only needs the **x** field:
@@ -1032,7 +1180,7 @@ A warp (32 lanes) touches addresses `0, 12, 24, …, 372`:
 
 ---
 
-## SoA: the same warp, one cacheline
+## ✅ SoA: the same warp, one cacheline
 
 ```c
 val[i] = x[i]                     # SoA
@@ -1049,11 +1197,11 @@ Addresses `0, 4, 8, …, 124` → **one 128-byte cacheline.**
 | useful fraction | ~33 % | **100 %** |
 | verdict | strided ❌ | **coalesced** ✅ |
 
-This is *exactly* Part III again — the lane-to-address map, nothing else.
+This is *exactly* the coalescing rule again — the lane-to-address map, nothing else.
 
 ---
 
-## When AoS is fine
+## 🤷 When AoS is fine
 
 AoS is only wasteful when threads read **one field at a time**.
 
@@ -1071,9 +1219,9 @@ then AoS uses every byte it fetches — **no waste.**
 > SoA wins when the access pattern is **per-field**, 
 >   - which is the overwhelming case in GPU kernels, DL, and physics simulations.
 
-
 ---
-## AoS vs SoA is already in your tensors
+
+## 🔥 AoS vs SoA is already in your tensors
 
 
 A `(N, C, H, W)` tensor is not a list of records. It is a stack of
@@ -1091,7 +1239,7 @@ A framework that stored images AoS-style (`[pixel: (r,g,b), …]`) would make ev
 
 ---
 
-## Week 8's convention, vindicated
+## 🏅 Week 8's convention, vindicated
 
 ```python
 col, row = cuda.grid(2)      # x → columns, y → rows
@@ -1104,7 +1252,9 @@ consecutive `threadIdx.x` then touch consecutive memory.
 
 ---
 
-## The unifying table
+<style scoped>section{font-size:25px} table{font-size:20px}</style>
+
+## 🧩 The unifying table
 
 
 > **The layout of data in memory and the map of threads to that memory
@@ -1123,15 +1273,13 @@ consecutive `threadIdx.x` then touch consecutive memory.
 
 ---
 
-
-
 <!-- _class: lead -->
 
-# Shared memory and tiling
+# 🧩 Shared memory and tiling
 
 ---
 
-## The idea, on paper first
+## 📝 The idea, on paper first
 
 One block computes a **T × T tile** of C. It walks along K in steps of T:
 
@@ -1148,7 +1296,7 @@ Each loaded value is used **T times**.
 
 ---
 
-## What that buys: traffic ÷ T
+## 📉 What that buys: traffic ÷ T
 
 Global reads: $2N^3 \rightarrow \dfrac{2N^3}{T}$ &nbsp;&nbsp;·&nbsp;&nbsp; intensity: $0.25 \rightarrow \dfrac{T}{4}$
 
@@ -1167,20 +1315,30 @@ Even T=32 is below the ridge of 25. **cuBLAS adds register blocking on top.**
 
 ---
 
-## The two barriers are not optional
+## 🚧 The two barriers are not optional
 
-| Remove | What can happen |
-|---|---|
-| after **load** | a thread reads a tile element nobody has written yet |
-| after **compute** | a fast thread overwrites the tile while a slow one still reads it |
+<div class="cols">
+<div class="card red">
 
-This is Week 3's race condition, on silicon.
+### ❌ No barrier after the **load**
+A thread reads a tile element **nobody has written yet**.
+
+</div>
+<div class="card red">
+
+### ❌ No barrier after the **compute**
+A fast thread **overwrites the tile** while a slow one still reads it.
+
+</div>
+</div>
+
+🔁 This is Week 3's **race condition**, on silicon.
 
 We will remove each one and look at the answer.
 
 ---
 
-## Barrier rules (from Week 8, now load-bearing)
+## 📜 Barrier rules (from Week 8, now load-bearing)
 
 ```python
 for k0 in range(0, K, T):
@@ -1196,7 +1354,7 @@ for k0 in range(0, K, T):
 
 ---
 
-## Numba: declaring shared memory
+## 🧱 Numba: declaring shared memory
 
 ```python
 from numba import cuda, float32
@@ -1213,7 +1371,7 @@ def kernel(A, B, C):
 
 ---
 
-## Consequence: to sweep T, use a factory
+## 🏭 Consequence: to sweep T, use a factory
 
 ```python
 def make_tiled(T):                      # T becomes a compile-time constant
@@ -1231,7 +1389,7 @@ You cannot pass the tile size as a runtime argument. This is the first thing you
 
 ---
 
-## The kernel, part 1: who am I, and load
+## 🧑‍💻 The kernel, part 1: who am I, and load
 
 ```python
 def make_tiled(T):
@@ -1251,7 +1409,7 @@ def make_tiled(T):
 
 ---
 
-## The kernel, part 2: compute and store
+## 🧑‍💻 The kernel, part 2: compute and store
 
 ```python
             for k in range(T):
@@ -1274,10 +1432,9 @@ assert np.allclose(dC.copy_to_host(), A @ B, atol=1e-2)
 
 ---
 
+## 🔮 Predict, then run
 
-## Predict, then run
-
-At N = 1024 the naive kernel must read 8.6 GB: at least **27 ms** at 320 GB/s (Part I).
+At N = 1024 the naive kernel must read 8.6 GB: at least **27 ms** at 320 GB/s (see *Counting the bytes*).
 
 Tiling with T = 16 cuts global traffic by **16×**.
 
@@ -1288,7 +1445,7 @@ Write a number down. Then run it.
 
 ---
 
-## Run it
+## ▶️ Run it
 
 ```bash
 python 03_matmul_naive.py          # naive kernel, N = 1024
@@ -1305,7 +1462,7 @@ by a clear margin. That is the win.
 
 ---
 
-## Now remove a barrier
+## 💥 Now remove a barrier
 
 ```bash
 python 04_matmul_tiled.py --race
@@ -1321,7 +1478,7 @@ A race is not a crash: it is a *nondeterministic* answer. That is what makes it 
 
 ---
 
-## Shared memory is banked
+## 🏦 Shared memory is banked
 
 - 32 **banks**, 4 bytes wide, accessible in parallel.
 - *n* addresses in *n* distinct banks → served together.
@@ -1334,7 +1491,9 @@ A race is not a crash: it is a *nondeterministic* answer. That is what makes it 
 
 ---
 
-## Banks of a 2D shared array
+<style scoped>section{font-size:24px} table{font-size:20px}</style>
+
+## 🧮 Banks of a 2D shared array
 
 Shared memory is **32 banks × 4 bytes**. Word `w` lives in bank `w mod 32`.
 The hardware serves **one word per bank per cycle**.
@@ -1355,7 +1514,7 @@ whether the row index helps or vanishes:
 
 ---
 
-## The three cases
+## 🚦 The three cases
 
 A warp is 32 lanes. What they touch decides the cost:
 
@@ -1371,7 +1530,8 @@ Note the middle case: reading the *same address* from every lane is a
 broadcast, not a conflict. That is what saves the matmul kernel.
 
 ---
-## Important: our matmul does *not* conflict
+
+## ✅ Important: our matmul does *not* conflict
 
 In the inner loop, take a warp with `tx = 0..31` (T = 32, so one value of `ty`):
 
@@ -1387,7 +1547,7 @@ Let's demonstrate it there.
 
 ---
 
-## The transpose: which access is the problem
+## 🔎 The transpose: which access is the problem
 
 Block is `(T, T) = (32, 32)` = 1024 threads. Global reads and writes
 are both coalesced. The shared-memory access is where it hurts.
@@ -1410,10 +1570,9 @@ Two shared-memory accesses. They behave differently:
 | **write** `tile[ty][tx]` | `tx` is the **column** index → sweeps banks, conflict-free |
 | **read** `tile[tx][ty]` | `tx` is the **row** index → multiplies the stride |
 
-
 ---
 
-## Warp layout: consecutive `tx`, one `ty`
+## 🧵 Warp layout: consecutive `tx`, one `ty`
 
 A warp is 32 **consecutive linear thread ids**. With `blockDim = (32, 32)`:
 
@@ -1435,7 +1594,9 @@ That is the strided pattern — and shared memory charges for it, unlike VRAM.
 
 ---
 
-## Unpadded (32): the `tx` term vanishes
+<style scoped>section{font-size:23px} table{font-size:18px} td,th{padding:2px 8px}</style>
+
+## ❌ Unpadded (32): the `tx` term vanishes
 
 `width = 32`. The read is `tile[tx][ty]`, word index `tx·32 + ty`:
 
@@ -1455,7 +1616,9 @@ The `tx` dependence **cancels** — every lane in the warp computes the same ban
 
 ---
 
-## Padded (33): the `tx` term returns
+<style scoped>section{font-size:23px} table{font-size:18px} td,th{padding:2px 8px}</style>
+
+## ✅ Padded (33): the `tx` term returns
 
 `width = 33`. Word index `tx·33 + ty`:
 
@@ -1475,7 +1638,9 @@ $$\text{bank} = (tx \cdot 33 + ty) \bmod 32 = \big(tx \cdot \underbrace{(33 \bmo
 
 ---
 
-## Why 33 — and why 32 is the unlucky number
+<style scoped>section{font-size:23px} table{font-size:19px}</style>
+
+## 🍀 Why 33 — and why 32 is the unlucky number
 
 The requirement is just: **`width` coprime to 32**, i.e. `width` odd.
 - Then `tx ↦ tx·width mod 32` is a bijection on `Z₃₂`.
@@ -1498,7 +1663,7 @@ on the hot access. That is the trade.
 
 ---
 
-## One rule, one sentence
+## 📌 One rule, one sentence
 
 > **A warp is free when its lanes land in distinct banks (different words)
 > or on the same word (broadcast).**
@@ -1515,7 +1680,7 @@ The tiled matmul,the block reduction, the softmax are already bank-friendly; the
 
 ---
 
-## Three-way summary
+## 🏁 Three-way summary
 
 | version | traffic | why it is where it is |
 |---|---|---|
@@ -1529,11 +1694,11 @@ Use the library for matmul. Write kernels for what the library does not have.
 
 <!-- _class: lead -->
 
-# Reductions: softmax redeemed
+# ➕ Reductions: softmax redeemed
 
 ---
 
-## What was wrong with Week 8's softmax
+## 🤦 What was wrong with Week 8's softmax
 
 ```python
 # Week 8, deliberately naive: EVERY thread did this
@@ -1547,7 +1712,7 @@ The row max and row sum are **reductions**. Threads must cooperate.
 
 ---
 
-## Tree reduction: same work, shorter chain
+## 🌳 Tree reduction: same work, shorter chain
 
 | | work | span (critical path) |
 |---|---|---|
@@ -1565,7 +1730,7 @@ last digits when the order changes — that is expected, not a bug.
 
 ---
 
-## Code: block sum in shared memory
+## 🧑‍💻 Code: block sum in shared memory
 
 ```python
 s = cuda.shared.array(shape=TPB, dtype=float32)
@@ -1584,19 +1749,30 @@ while stride > 0:
 
 ---
 
-## Two details that matter
+## 🔑 Two details that matter
 
-**1. `tid < stride`, not `tid % (2*stride) == 0`.**
-Contiguous active lanes → whole warps go idle instead of diverging.
-Same answer, better warp efficiency.
+<div class="cols">
+<div class="card blue">
 
-**2. The barrier is outside the `if`.**
-Every thread must arrive, including the ones doing nothing this round.
-Putting it inside the `if` is the classic deadlock/undefined-behaviour bug.
+### `tid < stride`
+Not `tid % (2*stride) == 0`.
+
+**Contiguous** active lanes: whole warps go idle instead of diverging. Same answer, better warp efficiency.
+
+</div>
+<div class="card orange">
+
+### The barrier is outside the `if`
+**Every** thread must arrive, including the ones doing nothing this round.
+
+Putting it inside the `if` is the classic **deadlock / undefined-behaviour** bug.
+
+</div>
+</div>
 
 ---
 
-## Across blocks: two options
+## 🧱 Across blocks: two options
 
 | option | how | cost |
 |---|---|---|
@@ -1608,7 +1784,7 @@ by making every thread queue on one lock.
 
 ---
 
-## One atomic per block vs one per thread
+## ⚛️ One atomic per block vs one per thread
 
 | version | atomics issued (n = 2²⁴) |
 |---|---:|
@@ -1625,7 +1801,7 @@ Both results are "correct", and their last digits differ. Explain why.
 
 ---
 
-## Softmax: three passes over shared memory
+## 🔁 Softmax: three passes over shared memory
 
 ```text
 one block per row, TPB threads (TPB ≥ n_cols, power of two)
@@ -1639,7 +1815,7 @@ Padding lanes contribute `-1e30` to the max and `0.0` to the sum.
 
 ---
 
-## Code: pass 1 (max)
+## 🧑‍💻 Code: pass 1 (max)
 
 ```python
 val = logits[row, tid] if tid < n else -1e30
@@ -1659,7 +1835,7 @@ That extra barrier is easy to forget. Without it, pass 2 races pass 1.
 
 ---
 
-## Code: passes 2 and 3
+## 🧑‍💻 Code: passes 2 and 3
 
 ```python
 e = math.exp(val - row_max) if tid < n else 0.0
@@ -1681,7 +1857,7 @@ if tid < n:
 
 ---
 
-## Run it
+## ▶️ Run it
 
 | rows × cols | TPB | what it tests |
 |---|---|---|
@@ -1696,7 +1872,7 @@ Still slower than cuDNN for wide rows: that needs warp shuffles and more tiling.
 
 ---
 
-## Optional: the last 32 lanes need no shared memory
+## 🎁 Optional: the last 32 lanes need no shared memory
 
 ```python
 # Numba exposes the warp shuffle:
@@ -1713,11 +1889,11 @@ Name it, recognise it in papers; implement it as a bonus exercise.
 <!-- _class: lead -->
 
 
-# Occupancy
+# 📊 Occupancy
 
 ---
 
-**Definition**
+## 📖 Definition
 
 $$\text{occupancy} = \frac{\text{resident warps per SM}}{\text{maximum warps per SM}}$$
 
@@ -1728,7 +1904,7 @@ It is a *latency-hiding proxy*, not a performance target.
 
 ---
 
-## T4 (sm_75) limits
+## 📏 T4 (sm_75) limits
 
 | resource | per SM |
 |---|---:|
@@ -1742,7 +1918,7 @@ Read them live: `gpu_utils.device_report()`.
 
 ---
 
-## Worked calculation: our own kernels
+## 🧮 Worked calculation: our own kernels
 
 | kernel | threads/block | shared/block | limiting resource | blocks/SM | occupancy |
 |---|---:|---:|---|---:|---:|
@@ -1758,7 +1934,7 @@ Read them live: `gpu_utils.device_report()`.
 
 ---
 
-## Registers usually bite first
+## 🧯 Registers usually bite first
 
 - 256 threads × 96 registers = 24,576 → only **2** blocks fit in 65,536 → 50 %.
 - Check the register count instead of guessing.
@@ -1774,9 +1950,9 @@ Spills (`local` bytes > 0) mean VRAM traffic you did not ask for.
 
 ---
 
----
+<style scoped>section{font-size:24px} table{font-size:18px} td,th{padding:3px 8px}</style>
 
-## Walkthrough: what limits occupancy on a T4?
+## 🔍 Walkthrough: what limits occupancy on a T4?
 
 A T4 SM has three hard ceilings: **1,024 threads**, **64 KB shared memory**, and **65,536 registers**.
 Suppose we launch blocks of **256 threads** (8 warps per block; 4 blocks = 100% occupancy):
@@ -1787,13 +1963,30 @@ Suppose we launch blocks of **256 threads** (8 warps per block; 4 blocks = 100% 
 | **B: Shared-heavy** | 24 KB | 32 | 8,192 | **Shared mem** (2 × 24 KB = 48 KB) | **2** | **50%** (16/32 warps) |
 | **C: Register-heavy** | 2 KB | 96 | 24,576 | **Registers** (2 × 24,576 = 49,152) | **2** | **50%** (16/32 warps) |
 
-- Adding a 3rd block in **Case B** requires 72 KB (> 64 KB limit).
-- Adding a 3rd block in **Case C** requires 73,728 registers (> 65,536 limit).
-- **Takeaway:** Whichever resource hits its SM ceiling **first** caps the number of resident warps.
+---
+
+## 🔍 Why no third block fits
+
+<div class="cols">
+<div class="card orange">
+
+### Case B: shared-heavy
+A 3rd block needs **72 KB**, more than the **64 KB** limit.
+
+</div>
+<div class="card red">
+
+### Case C: register-heavy
+A 3rd block needs **73,728 registers**, more than the **65,536** limit.
+
+</div>
+</div>
+
+💡 **Takeaway:** whichever resource hits its SM ceiling **first** caps the number of resident warps.
 
 ---
 
-## Occupancy is not the goal
+## 🎯 Occupancy is not the goal
 
 - Volkov's classic result: **more work per thread** (instruction-level
   parallelism) can win at *lower* occupancy.
@@ -1808,11 +2001,11 @@ Keep the fastest one that is **correct**.
 
 <!-- _class: lead -->
 
-# Profiling
+# 🔬 Profiling
 
 ---
 
-## Two tools, two different questions
+## 🛠️ Two tools, two different questions
 
 | tool | question | scope |
 |---|---|---|
@@ -1823,7 +2016,7 @@ Start with the timeline. A kernel that is 5 % of the runtime is not your problem
 
 ---
 
-## The first four metrics to read
+## 📊 The first four metrics to read
 
 | metric | tells you |
 |---|---|
@@ -1836,7 +2029,7 @@ Everything else is detail until these four say something.
 
 ---
 
-## Colab reality check
+## ⚠️ Colab reality check
 
 - `ncu` is often **not installed** on Colab.
 - Even installed, counters are frequently blocked:
@@ -1847,7 +2040,7 @@ So: try the tool, then fall back. The fallback is real profiling.
 
 ---
 
-## Try it 
+## 🧪 Try it
 
 ```bash
 which ncu                      # is Nsight Compute there at all?
@@ -1861,7 +2054,7 @@ and falls back to measurement automatically.
 
 ---
 
-## The fallback that always works
+## 🛟 The fallback that always works
 
 $$\text{achieved GB/s} = \frac{\text{bytes moved}}{\text{time}} \qquad
 \text{achieved GFLOP/s} = \frac{2N^3}{\text{time}}$$
@@ -1873,7 +2066,7 @@ Plus: sweep a parameter and watch the time. That is an experiment.
 
 ---
 
-## Timing a kernel correctly
+## ⏱️ Timing a kernel correctly
 
 ```python
 start, end = cuda.event(), cuda.event()   # events record timing by default
@@ -1888,7 +2081,7 @@ ms = start.elapsed_time(end)              # same as cuda.event_elapsed_time(star
 
 ---
 
-## `torch.profiler`: the Week 10 preview
+## 📈 `torch.profiler`: the Week 10 preview
 
 ```python
 from torch.profiler import profile, ProfilerActivity
@@ -1907,11 +2100,11 @@ Open the JSON in `chrome://tracing` or `ui.perfetto.dev`.
 
 <!-- _class: lead -->
 
-# Streams: overlapping copies and compute
+# 🌊 Streams: overlapping copies and compute
 
 ---
 
-## The GPU waits during copies
+## ⏳ The GPU waits during copies
 
 So far every program did the same three things, one after another:
 
@@ -1930,7 +2123,7 @@ Idea: **split the data into chunks and pipeline them**, like a factory line.
 
 ---
 
-## What is a stream?
+## 🌊 What is a stream?
 
 A **stream** is a queue of GPU work: copies and kernel launches.
 
@@ -1948,7 +2141,7 @@ s.synchronize()                           # wait for this stream; cuda.synchroni
 
 ---
 
-## The four questions, once more
+## ❓ The four questions, once more
 
 | Question | With streams |
 |---|---|
@@ -1961,20 +2154,36 @@ Week 5's lesson again: *overlap communication with computation.*
 
 ---
 
-## Three requirements for overlap
+## 🌊 Three requirements for overlap
 
-1. **Pinned (page-locked) host memory.** `cuda.pinned_array(n, dtype)` or `with cuda.pinned(a, b):`.
-   Copies from ordinary pageable memory are staged and cannot overlap.
-2. **Asynchronous copies in a stream** (`stream=s`). A plain `to_device` waits.
-3. **Independent chunks.** Chunk *k*'s result must not be needed by chunk *k+1*.
+<div class="cols3">
+<div class="card green">
 
-Also: the kernel needs enough work. A kernel that is 1 % of the time leaves nothing to hide.
+### 📌 Pinned host memory
+`cuda.pinned_array(n, dtype)` or `with cuda.pinned(a, b):`
 
-Pinned memory is a scarce resource; pin what you stream, not everything.
+Copies from pageable memory are staged and **cannot overlap**.
+
+</div>
+<div class="card blue">
+
+### 🛤️ Async copies in a stream
+Pass `stream=s`. A plain `to_device` **waits**.
+
+</div>
+<div class="card orange">
+
+### 🧩 Independent chunks
+Chunk *k*'s result must **not be needed** by chunk *k+1*.
+
+</div>
+</div>
+
+Also: the kernel needs **enough work** (a kernel that is 1 % of the time leaves nothing to hide). Pinned memory is scarce: **pin what you stream**, not everything.
 
 ---
 
-## Code: one stream per chunk
+## 🧑‍💻 Code: one stream per chunk
 
 ```python
 h_in  = cuda.pinned_array(n, dtype=np.float32)   # page-locked
@@ -1995,7 +2204,9 @@ cuda.synchronize()                               # all streams
 
 ---
 
-## Walkthrough: how 3 streams overlap on hardware
+<style scoped>section{font-size:23px} pre{font-size:15px;line-height:1.15}</style>
+
+## 🏭 Walkthrough: how 3 streams overlap on hardware
 
 The Python `for` loop queues commands **instantly** (asynchronously).
 The GPU routes them to **three independent hardware engines**:
@@ -2019,7 +2230,7 @@ D2H Copy                            │ Chunk 0 │  │ Chunk 1 │  │ Chunk 
 
 ---
 
-## Run it
+## ▶️ Run it
 
 ```bash
 python 10_streams_overlap.py                  # serial vs 4 streams, verified against NumPy
@@ -2029,20 +2240,20 @@ python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
 
 - With K balanced stages the ideal speedup is **3K / (K + 2)**: 2× for K = 4. The longest stage sets the limit.
 - Predict first: what happens at `--iters 1`? At `--chunks 1`?
-- A timeline (`nsys`, Part VII) shows copies and kernels side by side.
+- A timeline (`nsys`, see *Profiling*) shows copies and kernels side by side.
 - **Returns as:** `pin_memory=True` + `non_blocking=True` (Week 10); DDP overlap (Weeks 11–12).
 
 ---
 
 <!-- _class: lead -->
 
-# Lab and wrap-up
+# 🧪 Lab and wrap-up
 
 ---
 
 <!-- _footer: "Lab notebook: week09/lab_week09_memory_hierarchy.ipynb" -->
 
-## Lab: six experiments, one story
+## 🧪 Lab: six experiments, one story
 
 | # | task | file |
 |---|---|---|
@@ -2057,7 +2268,7 @@ python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
 
 ---
 
-## Answer sheet
+## 🧾 Answer sheet
 
 1. **Bytes:** how many bytes did your kernel move from VRAM? Show the arithmetic.
 2. **Intensity:** FLOPs ÷ bytes. Where does it sit on the roofline?
@@ -2069,15 +2280,28 @@ out of 320, and ______ GFLOP/s out of 8,100."*
 
 ---
 
-# Further notes
+## 🧱 Further notes: matrices that are not a multiple of T
 
-## Real-world matrices: safe boundary checks
+What if the dimensions $(M \times K)$ and $(K \times N)$ are **not** multiples of T? Two rules prevent deadlocks and garbage math:
 
-What if matrix dimensions \((M \times K)\) and \((K \times N)\) are **not** multiples of T?
-Two rules prevent deadlocks and garbage math:
+<div class="cols">
+<div class="card green">
 
-1. **Pad out-of-bounds loads with `0.0`** (never leave shared memory uninitialized).
-2. **Keep `cuda.syncthreads()` outside any `if` block.**
+### 0️⃣ Pad loads with `0.0`
+Pad out-of-bounds loads with **`0.0`**. Never leave shared memory uninitialized.
+
+</div>
+<div class="card blue">
+
+### 🚧 Barriers stay outside `if`
+Keep `cuda.syncthreads()` **outside any `if` block**.
+
+</div>
+</div>
+
+---
+
+## 🧱 Safe boundary checks in the tiled loop
 
 ```python
         for k0 in range(0, K, T):
@@ -2103,9 +2327,10 @@ Two rules prevent deadlocks and garbage math:
         if row < M and col < N:
             C[row, col] = acc
 ```
+
 ---
 
-## Forward map
+## 🔭 Forward map
 
 | today | where it reappears |
 |---|---|
@@ -2119,7 +2344,7 @@ Two rules prevent deadlocks and garbage math:
 
 ---
 
-## Takeaways: correctness first
+## ✅ Takeaways: correctness first
 
 1. **Shared memory is a user-managed cache.** You decide what to keep.
 2. **Two barriers per tile**, both reached by every thread in the block.
@@ -2129,7 +2354,7 @@ Two rules prevent deadlocks and garbage math:
 
 ---
 
-## Takeaways: then performance
+## ⚡ Takeaways: then performance
 
 1. **Count bytes before you optimise.** Intensity tells you which ceiling.
 2. **Coalescing:** consecutive lanes → consecutive addresses (in a row-major matrix, one thread per *column*). 8× at stake.
@@ -2142,7 +2367,7 @@ Two rules prevent deadlocks and garbage math:
 
 ---
 
-## Before Next Week
+## ✍️ Before next week
 
 - **Finish the lab** (`lab_week09_memory_hierarchy.ipynb`) with your results tables and one paragraph per experiment.
 - **Re-run** `04_matmul_tiled.py --race` a few more times. How often does a broken kernel look correct?
@@ -2151,14 +2376,14 @@ Two rules prevent deadlocks and garbage math:
 
 ---
 
-## References
+## 📚 References
 
 - NVIDIA, *CUDA C++ Programming Guide* and *Best Practices Guide*: memory hierarchy, coalescing, shared memory, bank conflicts, effective bandwidth.
 - Mark Harris, *Using Shared Memory in CUDA C/C++* and *An Efficient Matrix Transpose in CUDA C/C++*, NVIDIA Technical Blog, 2013.
 - V. Volkov, *Better Performance at Lower Occupancy*, GTC 2010.
 - [Numba CUDA: Memory](https://nvidia.github.io/numba-cuda/user/memory.html) · [Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html) · [Course repository](https://github.com/adaskin/hpc-for-ai-course)
 
-Figures `img/w09-*.svg` are drawn by `week09/make_figures.py`; see `img/CREDITS.md`.
+Figures `img/w09-*.svg` are drawn by `week09/make_figures.py`; the `img/w09-*.png` figures are from NVIDIA's CUDA Programming Guide (links on the slides). See `img/CREDITS.md`.
 
 ---
 

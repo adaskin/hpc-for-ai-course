@@ -1,4 +1,4 @@
-"""Week 9, Part III: coalesced vs strided access, measured.
+"""Week 9: coalesced vs strided access, measured.
 
 The same matrix, the same arithmetic, two ways to assign threads:
   col_sums: thread j sums column j  -> at step r, lanes j, j+1, ... read A[r, j], A[r, j+1], ...

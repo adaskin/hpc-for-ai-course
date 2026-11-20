@@ -1,4 +1,4 @@
-"""Week 9, Part I: the naive matmul, timed and compared with the traffic model.
+"""Week 9: the naive matmul, timed and compared with the traffic model.
 
 One thread per element of C. Each thread reads a full row of A and a full column
 of B from global memory, so every element of A and B is fetched N times.

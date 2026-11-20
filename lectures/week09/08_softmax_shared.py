@@ -1,4 +1,4 @@
-"""Week 9, Part V: redeeming Week 8's naive softmax with a cooperative reduction.
+"""Week 9: redeeming Week 8's naive softmax with a cooperative reduction.
 
 One block per row; three passes over shared memory: max, sum, normalise.
 Requires n_cols <= TPB, with TPB a power of two. Padding lanes contribute

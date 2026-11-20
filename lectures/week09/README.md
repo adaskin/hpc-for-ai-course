@@ -1,23 +1,23 @@
 ## Week 9: the CUDA memory hierarchy and profiling
 
-Slides: `../09memory-hierarchy-and-profiling.md` (Marp). The deck follows one idea: a kernel is fast when **each byte fetched from VRAM is used many times**. Parts I–IV (counting bytes, the memory hierarchy, coalescing, shared-memory tiling) are the spine; Parts V–VIII (reductions, occupancy, profiling, streams) can move to self-study if time is short.
+Slides: `../09memory-hierarchy-and-profiling.md` (Marp). The deck follows one idea: a kernel is fast when **each byte fetched from VRAM is used many times**. The first four topics (counting bytes, the memory hierarchy, coalescing, shared-memory tiling) are the spine; the last four (reductions, occupancy, profiling, streams) can move to self-study if time is short.
 
 ## Scripts
 
 Each script is complete and prints its own results; every kernel is verified against NumPy or SciPy before it is timed. Run them from this directory.
 
-| File | Deck part | What it shows |
+| File | Deck topic | What it shows |
 |---|---|---|
-| `01_traffic_accounting.py` | I | The traffic model for naive and tiled matmul against the T4 ceilings. **No GPU needed.** |
-| `02_coalescing.py` | III | Sum of a 4096² matrix with one thread per row (strided) vs one thread per column (coalesced); achieved GB/s |
-| `03_matmul_naive.py` | I | Naive matmul, timed and compared with the no-reuse traffic model |
-| `04_matmul_tiled.py` | IV | Shared-memory tiled matmul; `--race` removes each `syncthreads()` in turn to show a data race |
-| `05_tile_sweep.py` | IV, VI | Naive vs tiled (T = 8, 16, 32) vs cuBLAS, with theoretical occupancy |
-| `06_bank_conflicts.py` | IV | Transpose with and without a padded shared tile |
-| `07_block_reduce.py` | V | Shared-memory tree reduction with one atomic per block vs one atomic per thread |
-| `08_softmax_shared.py` | V | Week 8's softmax redone with a cooperative reduction (one block per row) |
-| `09_profile_and_measure.py` | VII | Tries Nsight Compute, falls back to events + achieved GB/s and GFLOP/s; `--torch` adds `torch.profiler` |
-| `10_streams_overlap.py` | VIII | Serial upload → kernel → download vs K chunks in K streams with pinned memory (`cuda.stream`) |
+| `01_traffic_accounting.py` | counting bytes | The traffic model for naive and tiled matmul against the T4 ceilings. **No GPU needed.** |
+| `02_coalescing.py` | coalescing | Sum of a 4096² matrix with one thread per row (strided) vs one thread per column (coalesced); achieved GB/s |
+| `03_matmul_naive.py` | counting bytes | Naive matmul, timed and compared with the no-reuse traffic model |
+| `04_matmul_tiled.py` | tiling | Shared-memory tiled matmul; `--race` removes each `syncthreads()` in turn to show a data race |
+| `05_tile_sweep.py` | tiling, occupancy | Naive vs tiled (T = 8, 16, 32) vs cuBLAS, with theoretical occupancy |
+| `06_bank_conflicts.py` | tiling | Transpose with and without a padded shared tile |
+| `07_block_reduce.py` | reductions | Shared-memory tree reduction with one atomic per block vs one atomic per thread |
+| `08_softmax_shared.py` | reductions | Week 8's softmax redone with a cooperative reduction (one block per row) |
+| `09_profile_and_measure.py` | profiling | Tries Nsight Compute, falls back to events + achieved GB/s and GFLOP/s; `--torch` adds `torch.profiler` |
+| `10_streams_overlap.py` | streams | Serial upload → kernel → download vs K chunks in K streams with pinned memory (`cuda.stream`) |
 | `gpu_utils.py` | all | `time_ms` (CUDA-event timing), `gbs`, `gflops`, `device_report`, `kernel_resources`, `theoretical_occupancy` |
 | `make_figures.py` | all | Regenerates the ten `../img/w09-*.svg` figures (`python make_figures.py`; `--png DIR` for previews) |
 
