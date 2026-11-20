@@ -15,24 +15,6 @@ style: |
   pre { font-size: 19px; }
   img:not(.emoji) { display: block; margin: 0 auto; }   /* emoji images stay inline */
   footer { font-size: 16px; opacity: 0.5; }
-  /* html helpers: columns, cards, tags (render with html enabled) */
-  .cols  { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
-  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; align-items: start; }
-  .wide-left { display: grid; grid-template-columns: 1.5fr 1fr; gap: 22px; align-items: start; }
-  .card { border: 2px solid #cbd5e1; border-radius: 14px; padding: 6px 16px; background: #f8fafc; font-size: 24px; }
-  .card h3 { margin: 4px 0; font-size: 28px; }
-  .card p { margin: 4px 0; }
-  .blue   { border-color: #2f6fb0; background: #e6eef8; }
-  .orange { border-color: #e08a1e; background: #fbeedb; }
-  .green  { border-color: #2e7d5b; background: #e6f2ec; }
-  .red    { border-color: #b3402f; background: #f7e4e0; }
-  .gray   { border-color: #6b7280; background: #eef0f3; }
-  .big    { font-size: 36px; }
-  .small  { font-size: 21px; }
-  .tag { display: inline-block; padding: 0 12px; border-radius: 12px; background: #2f6fb0; color: white; font-size: 20px; }
-  .tag.orange { background: #e08a1e; border: 0; }
-  .tag.green  { background: #2e7d5b; border: 0; }
-  .tag.red    { background: #b3402f; border: 0; }
 ---
 
 <!-- _class: lead -->
@@ -72,43 +54,16 @@ Week 13     deployment                    torch.compile
 
 ## 🔁 Last week in one minute
 
-<div class="cols">
-<div class="card blue">
-
-### 📏 Count the bytes
-A kernel is fast when each byte from VRAM is **used many times**.
-<span class="small">➡️ Today: bytes also cross the slower PCIe link (~12 GB/s).</span>
-
-</div>
-<div class="card orange">
-
-### 🧱 Neighbours together
-Coalescing and tiling: one big aligned fetch beats many scattered ones.
-<span class="small">➡️ Today: one batched call beats many per-sample calls.</span>
-
-</div>
-<div class="card green">
-
-### 🌊 Overlap
-Streams and pinned memory hide copies behind compute.
-<span class="small">➡️ Today: the same trick, for the input batch.</span>
-
-</div>
-<div class="card red">
-
-### 📈 The timeline
-Gaps between kernels mean an **idle GPU**.
-<span class="small">➡️ Today: why are there gaps, and how do we close them?</span>
-
-</div>
-</div>
+| Last week | Today |
+|---|---|
+| 📏 **Count the bytes:** a kernel is fast when each byte from VRAM is used many times | bytes also cross the slower PCIe link (~12 GB/s) |
+| 🧱 **Neighbours together:** coalescing and tiling, one big aligned fetch beats many scattered ones | one batched call beats many per-sample calls |
+| 🌊 **Overlap:** streams and pinned memory hide copies behind compute | the same trick, for the input batch |
+| 📈 **The timeline:** gaps between kernels mean an **idle GPU** | why are there gaps, and how do we close them? |
 
 ---
 
 ## 🧠 PyTorch in one slide (if you are new to it)
-
-<div class="wide-left">
-<div>
 
 ```python
 loader = DataLoader(dataset, batch_size=32)
@@ -122,9 +77,6 @@ for x, y in loader:            # one pass = one epoch
     optimizer.zero_grad()
 ```
 
-</div>
-<div class="card gray">
-
 **sample**: one example
 
 **batch**: a group of samples
@@ -134,9 +86,6 @@ for x, y in loader:            # one pass = one epoch
 **epoch**: every sample once
 
 The GPU cannot start a step until **its batch has arrived**.
-
-</div>
-</div>
 
 ---
 
@@ -229,22 +178,13 @@ The **main process** does everything, one after the other:
 loader = DataLoader(dataset, batch_size=32, num_workers=4)
 ```
 
-<div class="cols">
-<div>
-
 - Each worker is a **separate process** that builds whole batches
 - `prefetch_factor` (default 2): batches each worker prepares **ahead of time**
 - Different processes, so **no GIL problem** (Weeks 3–4)
 
-</div>
-<div class="card orange">
-
 **Costs:** CPU cores, RAM, start-up time.
 
 **How many?** About *(samples/s the GPU eats) ÷ (samples/s one worker makes)*. More workers than **cores** will not help: check `os.cpu_count()`.
-
-</div>
-</div>
 
 <!-- _footer: "Worker sizing: week10/01_cost_model.py" -->
 
@@ -360,23 +300,11 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 - `x.to("cuda", non_blocking=True)` can **return before the copy finishes** when `x` is pinned
 - ✅ **Copy/compute overlap on the GPU needs all three:**
 
-<div class="cols3">
-<div class="card green">
-
 📌 a **pinned** source
-
-</div>
-<div class="card blue">
 
 🛤️ a **separate, non-default** stream
 
-</div>
-<div class="card orange">
-
 🚚 a **free copy (DMA) engine**
-
-</div>
-</div>
 
 - ❌ `pin_memory=True` + `non_blocking=True` on the default stream is **not** overlap
 - ❌ `x.pin_memory().to(dev, non_blocking=True)` by hand can be **up to 2× slower** than a plain `.to(dev)`: `pin_memory()` blocks the host. Let the DataLoader pin.
@@ -394,9 +322,6 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 
 ## ⚠️ A race on the PCIe bus
 
-<div class="cols">
-<div>
-
 ```python
 # host to device
 dst = pinned.to("cuda", non_blocking=True)
@@ -409,18 +334,12 @@ host.sum()            # ❌ may read garbage
 torch.cuda.synchronize()   # ✅ wait first
 ```
 
-</div>
-<div class="card red">
-
 🔁 **Week 3:** a data race.
 🔁 **Week 9:** a missing barrier gives a **wrong answer, not a crash**.
 
 Rules:
 - never change a pinned source while a copy may be pending
 - synchronise before you read a `non_blocking` result on the CPU
-
-</div>
-</div>
 
 <!-- _footer: "Demo with real failures on a GPU: week10/03_pinned_transfer.py (the official guide's tests failed at iterations 2 and 0)." -->
 
@@ -515,55 +434,24 @@ prof.export_chrome_trace("week10_trace.json")      # open at ui.perfetto.dev
 
 ## ⚙️ Worker pitfalls (read the DataLoader docs)
 
-<div class="cols">
-<div class="card blue">
-
-### 🚀 Start method
-Python **3.14+** uses `forkserver` on Linux. The dataset and `worker_init_fn` must be **picklable** (no lambdas). Guard scripts with `if __name__ == "__main__":`.
-
-</div>
-<div class="card orange">
-
-### 🎲 Seeds and memory
-Random augmentations must **differ** across workers. Big lists of Python objects can grow in every worker; **NumPy arrays** do not.
-
-</div>
-<div class="card green">
-
-### 🏁 `in_order=False`
-A slow worker no longer blocks the queue (a Week 5 straggler). The docs warn it **can harm reproducibility** and skew imbalanced data.
-
-</div>
-<div class="card red">
-
-### 🧱 Shared memory
-Batches travel through `/dev/shm`. A full one gives a **bus error** in a worker (Docker, Colab). See `set_sharing_strategy()`.
-
-</div>
-</div>
+- 🚀 **Start method:** Python **3.14+** uses `forkserver` on Linux. The dataset and `worker_init_fn` must be **picklable** (no lambdas). Guard scripts with `if __name__ == "__main__":`.
+- 🎲 **Seeds and memory:** random augmentations must **differ** across workers. Big lists of Python objects can grow in every worker; **NumPy arrays** do not.
+- 🏁 **`in_order=False`:** a slow worker no longer blocks the queue (a Week 5 straggler). The docs warn it **can harm reproducibility**.
+- 🧱 **Shared memory:** batches travel through `/dev/shm`. A full one gives a **bus error** in a worker (Docker, Colab). See `set_sharing_strategy()`.
 
 ---
 
 ## 🧭 Tuning recipe
-
-<div class="cols">
-<div class="card blue">
 
 ### Always
 - 📏 measure: **is the GPU waiting?**
 - 🪜 climb the ladder **in order**, re-measure each time
 - 🛑 stop when the loader is no longer the bottleneck
 
-</div>
-<div class="card green">
-
 ### Also (tuning guide)
 - `optimizer.zero_grad(set_to_none=True)`
 - `torch.backends.cudnn.benchmark = True` for fixed-size conv inputs
 - fewer syncs (`.item()`)
-
-</div>
-</div>
 
 💡 Honest outcome: *"the job is not input-bound, so none of this helps."*
 
@@ -588,35 +476,9 @@ See each project's own documentation when you need them.
 
 ---
 
-<style scoped>
-table { font-size: 21px; }
-table code { font-size: 18px; }
-.card { font-size: 21px; }
-.card h3 { font-size: 24px; }
-</style>
-
 ## 🔁 The same three ideas everywhere
 
-<div class="cols3">
-<div class="card blue">
-
-### 🧵 Parallel work
-Decode and augment **many samples at once**, off the training thread
-
-</div>
-<div class="card green">
-
-### 🌊 Overlap
-Prepare batch *k+1* while the GPU runs batch *k* (**prefetch**)
-
-</div>
-<div class="card orange">
-
-### 💾 Reuse
-Do expensive work **once** and **cache** it
-
-</div>
-</div>
+🧵 **parallel work** off the training thread · 🌊 **overlap** (prefetch batch *k+1* during step *k*) · 💾 **reuse** (cache)
 
 | Idea | PyTorch `DataLoader` | `tf.data` (TensorFlow) |
 |---|---|---|
@@ -632,9 +494,6 @@ Do expensive work **once** and **cache** it
 
 ## 🟧 TensorFlow: `tf.data`
 
-<div class="cols">
-<div>
-
 ```python
 dataset = (
     dataset
@@ -647,26 +506,13 @@ dataset = (
 
 `AUTOTUNE` lets the runtime pick the parallelism and buffer sizes.
 
-</div>
-<div class="card gray">
-
-![w:520](img/w10-idle-gpu.svg)
-
-The tf.data guide draws the same picture: without `prefetch` the consumer waits for the producer.
-
-</div>
-</div>
+The tf.data guide draws the same picture as our idle-GPU figure: without `prefetch` the consumer waits for the producer.
 
 <!-- _footer: "Each call is shown on the guide's page; this chain is our combination of them. Guide's toy benchmark: sequential map 0.517 s, parallel map 0.395 s." -->
 
 ---
 
-## 🟦 JAX and Hugging Face
-
-<div class="cols">
-<div class="card blue">
-
-### JAX: Grain
+## 🟦 JAX: Grain
 
 ```python
 dataset = (
@@ -679,10 +525,11 @@ dataset = (
 
 **Grain** is a data-loading library for JAX; its tutorial prefetches with Python threads (`ReadOptions(num_threads=16, prefetch_buffer_size=500)`).
 
-</div>
-<div class="card orange">
+<!-- _footer: "Docs: google-grain.readthedocs.io (basic tutorial)" -->
 
-### 🤗 `datasets`
+---
+
+## 🤗 Hugging Face `datasets`
 
 ```python
 ds = Dataset.from_dict(
@@ -694,17 +541,11 @@ dataloader = DataLoader(
 
 Hugging Face datasets **plug into the `DataLoader` you know**; `streaming=True` reads without a full download.
 
-</div>
-</div>
-
-<!-- _footer: "Docs: google-grain.readthedocs.io (basic tutorial) · huggingface.co/docs/datasets (use_with_pytorch, stream)" -->
+<!-- _footer: "Docs: huggingface.co/docs/datasets (use_with_pytorch, stream)" -->
 
 ---
 
 ## 🟩 NVIDIA DALI: move the pipeline to the GPU
-
-<div class="cols">
-<div>
 
 ```python
 @pipeline_def
@@ -716,17 +557,11 @@ def simple_pipeline():
     return images, labels
 ```
 
-</div>
-<div class="card green">
-
 🧩 A pipeline is a **graph of operators**: read, decode, augment.
 
 🚀 Operators can run on the **GPU**, which helps when CPU decoding is the bottleneck.
 
 🔌 It plugs into PyTorch, TensorFlow and JAX.
-
-</div>
-</div>
 
 <!-- _footer: "Example adapted from DALI's 'Pipeline mode' page: docs.nvidia.com/deeplearning/dali/user-guide/docs/" -->
 
