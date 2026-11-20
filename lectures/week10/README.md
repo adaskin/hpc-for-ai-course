@@ -2,7 +2,7 @@
 
 Slides: `../10data-pipelines.md` (Marp). The deck follows PyTorch's official tutorial *Data Loading Optimization in PyTorch*: start from the slowest loader and add one change at a time (workers, pinned memory, persistent workers, side-stream copy, `__getitems__`), measuring each step. It reviews Week 9 in one slide, explains the PyTorch basics for newcomers in one slide, and adds the measuring tools (hidden syncs, timing recipe, `torch.profiler`).
 
-**Rendering the slides.** The deck uses a little HTML (columns and cards). Marp CLI reads `../.marprc.yml`, which turns HTML on. In VS Code, enable the setting `markdown.marp.enableHtml`.
+**Rendering the slides.** The deck is plain Markdown plus Marp directives; no HTML is needed.
 
 ## Scripts
 

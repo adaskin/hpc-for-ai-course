@@ -15,24 +15,6 @@ style: |
   pre { font-size: 19px; }
   img:not(.emoji) { display: block; margin: 0 auto; }   /* emoji images stay inline */
   footer { font-size: 16px; opacity: 0.5; }
-  /* html helpers: columns, cards, tags (render with html enabled) */
-  .cols  { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
-  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; align-items: start; }
-  .wide-left { display: grid; grid-template-columns: 1.5fr 1fr; gap: 22px; align-items: start; }
-  .card { border: 2px solid #cbd5e1; border-radius: 14px; padding: 6px 16px; background: #f8fafc; font-size: 24px; }
-  .card h3 { margin: 4px 0; font-size: 28px; }
-  .card p { margin: 4px 0; }
-  .blue   { border-color: #2f6fb0; background: #e6eef8; }
-  .orange { border-color: #e08a1e; background: #fbeedb; }
-  .green  { border-color: #2e7d5b; background: #e6f2ec; }
-  .red    { border-color: #b3402f; background: #f7e4e0; }
-  .gray   { border-color: #6b7280; background: #eef0f3; }
-  .big    { font-size: 36px; }
-  .small  { font-size: 21px; }
-  .tag { display: inline-block; padding: 0 12px; border-radius: 12px; background: #2f6fb0; color: white; font-size: 20px; }
-  .tag.orange { background: #e08a1e; border: 0; }
-  .tag.green  { background: #2e7d5b; border: 0; }
-  .tag.red    { background: #b3402f; border: 0; }
 ---
 
 <!-- _class: lead -->
@@ -52,17 +34,11 @@ Ammar Daşkın
 
 ## 🔁 Review: the kernel function
 
-<div class="cols">
-<div class="card blue">
-
 ### 🧩 What it is
 A GPU function **meant to be called from CPU code**.
 
 - cannot explicitly **return** values
 - results are written into an **array passed to the function**
-
-</div>
-<div class="card orange">
 
 ### 🚀 How you launch it
 The **thread hierarchy is declared at the call**:
@@ -70,9 +46,6 @@ The **thread hierarchy is declared at the call**:
 - the number of **blocks**
 - the number of **threads per block**
 - the same kernel can be launched many times with different sizes
-
-</div>
-</div>
 
 📖 [Numba CUDA: Writing Kernels](https://nvidia.github.io/numba-cuda/user/kernels.html)
 
@@ -239,11 +212,7 @@ Week 13    deployment                 torch.compile
 
 ## 🎯 The week in one sentence
 
-<div class="card blue big">
-
 A kernel is fast when **each byte fetched from VRAM is used many times.**
-
-</div>
 
 🧱 **Tiling** is how you arrange that.
 🔬 **Profiling** is how you prove it worked.
@@ -254,15 +223,9 @@ A kernel is fast when **each byte fetched from VRAM is used many times.**
 
 Everything starts from the **memory hierarchy**.
 
-<div class="cols">
-<div class="card green">
-
 ### 🔬 In detail
 - **Coalescing**
 - **Shared memory + tiling**
-
-</div>
-<div class="card gray">
 
 ### 👀 Briefly (know what it is)
 - Reductions (softmax redeemed)
@@ -270,9 +233,6 @@ Everything starts from the **memory hierarchy**.
 - Profiling
 - Streams: overlap copies and compute
 - Lab + wrap-up
-
-</div>
-</div>
 
 ---
 
@@ -311,26 +271,14 @@ When you call `kernel[blocks, tpb](...)`, the hardware maps your software hierar
 
 ## 💡 Why hardware matters today
 
-<div class="cols3">
-<div class="card blue">
-
 ### 🚰 Compute is cheap, memory is far
 An SM has thousands of ALUs hungry for data, connected to VRAM by a narrow straw.
-
-</div>
-<div class="card orange">
 
 ### 📍 Blocks stay put
 A block lives on **one SM**, so its threads can share the SM's fast on-chip SRAM.
 
-</div>
-<div class="card green">
-
 ### 🔢 32 is the magic number
 Warp size = 32 lanes = 32 shared-memory banks = 128-byte cache line (32 floats).
-
-</div>
-</div>
 
 Keep these three numbers in mind as we start counting bytes.
 
@@ -463,8 +411,6 @@ def kernel(out):
 
 ---
 
-<style scoped>section{font-size:24px} pre{font-size:15px;line-height:1.15}</style>
-
 ## 🏭 Inside a Streaming Multiprocessor (SM)
 
 Every SM is an independent mini-processor with its own compute units and **on-chip memory**:
@@ -486,6 +432,10 @@ Every SM is an independent mini-processor with its own compute units and **on-ch
                             │  Slow (~400–800 cycles)
                    [ L2 Cache & VRAM ]
 ```
+
+---
+
+## 🏭 Inside an SM: two facts
 
 - **Unified SRAM:** Shared memory and L1 cache live on the **exact same physical silicon** (64 KB–128 KB per SM).
 - **Isolation:** Thread blocks on the same SM **cannot** see each other's shared memory or registers.
@@ -557,24 +507,13 @@ __global__ void cuda_transpose(int m, float *a, float *c ){
 
 ## 🔍 Which transpose access is coalesced?
 
-<div class="cols">
-<div class="card green">
-
 ### ✅ Read of `a`: coalesced
-In a 2D thread block, `x` moves fastest, so consecutive `threadIdx.x` should access consecutive memory.
-
-`threadIdx.x` appears in `myCol`, the **second** argument of `INDX`: consecutive threads read consecutive values of `a`.
-
-</div>
-<div class="card red">
+In a 2D block, `x` moves fastest: consecutive `threadIdx.x` should touch consecutive memory. `threadIdx.x` is in `myCol`, the **second** argument of `INDX`, so consecutive threads read consecutive values of `a`.
 
 ### ❌ Write of `c`: not coalesced
 `myCol` is the **first** argument of `INDX`: when it grows by 1, the address changes by `ld` (the leading dimension).
 
-Consecutive threads write elements `ld` apart. When `ld` is larger than 32 (any matrix larger than 32), this is the **pathological case**.
-
-</div>
-</div>
+Consecutive threads write elements `ld` apart: for any matrix larger than 32 this is the **pathological case**.
 
 💡 To alleviate the uncoalesced writes, use **shared memory** (next slides).
 
@@ -582,17 +521,11 @@ Consecutive threads write elements `ld` apart. When `ld` is larger than 32 (any 
 
 ## 🏦 Shared memory banks
 
-<div class="cols">
-<div class="card blue">
-
 ### 🧱 How it is organised
 - **32 banks**; successive 32-bit words map to successive banks
 - each bank serves **32 bits per clock cycle**
 
 ⚠️ When threads of a warp access **different words in the same bank**, a **bank conflict** occurs: the accesses to that bank are **serialized**.
-
-</div>
-<div class="card green">
 
 ### ✅ Two exceptions
 Several threads of a warp access the **same shared-memory location**:
@@ -600,27 +533,15 @@ Several threads of a warp access the **same shared-memory location**:
 - **read**: the word is **broadcast** to the requesting threads
 - **write**: each address is written by only one of the threads (which one is undefined)
 
-</div>
-</div>
-
 ---
 
 ## 🏦 Bank access patterns
 
-<div class="cols">
-<div>
-
-![h:500](img/w09-shared-memory-access.png)
-
-</div>
-<div class="small">
+![h:340](img/w09-shared-memory-access.png)
 
 - **Left:** linear addressing with a stride of one 32-bit word (**no** bank conflict).
 - **Middle:** linear addressing with a stride of two 32-bit words (**two-way** bank conflict).
 - **Right:** linear addressing with a stride of three 32-bit words (**no** bank conflict).
-
-</div>
-</div>
 
 <!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" -->
 
@@ -671,24 +592,21 @@ A common fix is to pad the shared memory by adding one to the column dimension:
 
 `smemArray = cuda.shared.array(shape=(32, 32 + 1), dtype=np.float32)`
 
-<div class="cols">
-<div>
+The next slide shows the bank layout before and after.
+
+---
+
+## 🩹 Unpadded vs padded
 
 **Unpadded**
 
-![h:250](img/w09-transpose-1.png)
-
-</div>
-<div>
+![h:165](img/w09-transpose-1.png)
 
 **Padded (+1 column)**
 
-![h:250](img/w09-transpose-2.png)
+![h:165](img/w09-transpose-2.png)
 
-</div>
-</div>
-
-<span class="small">The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.</span>
+The numbers in the boxes indicate the warp index. The colors indicate which bank is associated with that shared memory location.
 
 ---
 
@@ -740,7 +658,7 @@ T4: 8,100 GFLOP/s ÷ 320 GB/s ≈ **25 FLOP/byte** — the *ridge point*.
 
 ![h:410](img/w09-tile-space.png)
 
-<span class="small">A two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles.</span>
+A two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles.
 
 <!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" -->
 
@@ -773,8 +691,6 @@ The accesses themselves are coalesced (see *Coalescing*); the problem here is **
 ![w:900](img/w09-reuse.svg)
 
 ---
-
-<style scoped>section{font-size:25px} pre{font-size:16px}</style>
 
 ## 🧮 Example: 4×4 matmul with 2×2 tiles
 
@@ -815,9 +731,7 @@ Instead of each thread reading a full row and column from VRAM, the 4 threads ma
 
 ---
 
-<style scoped>section{font-size:23px} pre{font-size:15px}</style>
-
-## 🔢 Numerical walkthrough: Phase 0 & Phase 1
+## 🔢 Numerical walkthrough: Phase 0
 
 **Phase 0:** Each thread loads **1 element** of `Tile A0` and **1 element** of `Tile B0` into shared memory (`sA`, `sB`), then calls `cuda.syncthreads()`:
 
@@ -829,6 +743,11 @@ sA = [ 1  2 ]      sB = [ 2  0 ]      Partial sums (from fast SRAM):
                                       • Thread (1,1): 5·0 + 6·3 = 18
 ```
 *(Notice: every number in `sA` and `sB` was fetched from VRAM **once**, but used by **2 threads**.)*
+
+
+---
+
+## 🔢 Numerical walkthrough: Phase 1
 
 **Phase 1:** Synchronize, overwrite `sA` and `sB` with `Tile A1` and `Tile B1`, and accumulate:
 
@@ -952,8 +871,6 @@ Scope is not a detail. It decides what can cooperate with what.
 
 ---
 
-<style scoped>section{font-size:24px}</style>
-
 ## 🏷️ "local" means scope, not location
 
 In CUDA, **"local"** describes *who can see it* (private to one thread), **not** *where it sits on the chip*:
@@ -961,7 +878,10 @@ In CUDA, **"local"** describes *who can see it* (private to one thread), **not**
 - **Registers (fast, ~1 cycle):** On-chip per-thread memory. Used for normal variables (`acc = 0.0`).
 - **Local Memory (slow, ~400 cycles):** Off-chip **VRAM** reserved privately for one thread.
 
-**When does slow local memory happen?**
+---
+
+## 🏷️ When does slow local memory happen?
+
 1. **Register spilling:** Your thread uses too many variables, so excess registers overflow into VRAM.
 2. **Dynamic indexing:** You create a small per-thread array (`cuda.local.array`) and index it with a variable (`arr[i]`) instead of a constant (`arr[0]`).
 
@@ -1215,14 +1135,12 @@ v = sqrt(particles[i].x * particles[i].x
 
 then AoS uses every byte it fetches — **no waste.**
 
-
 > SoA wins when the access pattern is **per-field**, 
 >   - which is the overwhelming case in GPU kernels, DL, and physics simulations.
 
 ---
 
 ## 🔥 AoS vs SoA is already in your tensors
-
 
 A `(N, C, H, W)` tensor is not a list of records. It is a stack of
 **contiguous per-field** planes:
@@ -1252,10 +1170,7 @@ consecutive `threadIdx.x` then touch consecutive memory.
 
 ---
 
-<style scoped>section{font-size:25px} table{font-size:20px}</style>
-
 ## 🧩 The unifying table
-
 
 > **The layout of data in memory and the map of threads to that memory
 > decide whether a warp's 32 lanes collapse to 1 transaction.**
@@ -1317,20 +1232,11 @@ Even T=32 is below the ridge of 25. **cuBLAS adds register blocking on top.**
 
 ## 🚧 The two barriers are not optional
 
-<div class="cols">
-<div class="card red">
-
 ### ❌ No barrier after the **load**
 A thread reads a tile element **nobody has written yet**.
 
-</div>
-<div class="card red">
-
 ### ❌ No barrier after the **compute**
 A fast thread **overwrites the tile** while a slow one still reads it.
-
-</div>
-</div>
 
 🔁 This is Week 3's **race condition**, on silicon.
 
@@ -1491,8 +1397,6 @@ A race is not a crash: it is a *nondeterministic* answer. That is what makes it 
 
 ---
 
-<style scoped>section{font-size:24px} table{font-size:20px}</style>
-
 ## 🧮 Banks of a 2D shared array
 
 Shared memory is **32 banks × 4 bytes**. Word `w` lives in bank `w mod 32`.
@@ -1594,8 +1498,6 @@ That is the strided pattern — and shared memory charges for it, unlike VRAM.
 
 ---
 
-<style scoped>section{font-size:23px} table{font-size:18px} td,th{padding:2px 8px}</style>
-
 ## ❌ Unpadded (32): the `tx` term vanishes
 
 `width = 32`. The read is `tile[tx][ty]`, word index `tx·32 + ty`:
@@ -1603,6 +1505,10 @@ That is the strided pattern — and shared memory charges for it, unlike VRAM.
 $$\text{bank} = (tx \cdot 32 + ty) \bmod 32 = \underbrace{(tx \cdot 32) \bmod 32}_{=\,0} + ty = ty$$
 
 The `tx` dependence **cancels** — every lane in the warp computes the same bank.
+
+---
+
+## ❌ Unpadded (32): the table
 
 | lane `tx` | reads | word index | bank |
 |---:|---|---:|---:|
@@ -1616,15 +1522,19 @@ The `tx` dependence **cancels** — every lane in the warp computes the same ban
 
 ---
 
-<style scoped>section{font-size:23px} table{font-size:18px} td,th{padding:2px 8px}</style>
-
 ## ✅ Padded (33): the `tx` term returns
 
 `width = 33`. Word index `tx·33 + ty`:
 
 $$\text{bank} = (tx \cdot 33 + ty) \bmod 32 = \big(tx \cdot \underbrace{(33 \bmod 32)}_{=\,1} + ty\big) \bmod 32 = (tx + ty) \bmod 32$$
 
-`tx` now contributes **linearly**, and `tx ↦ (tx + ty) mod 32` is a **rotation** of `Z₃₂` — a bijection. With `ty = 0`:
+`tx` now contributes **linearly**, and `tx ↦ (tx + ty) mod 32` is a **rotation** of `Z₃₂`, a bijection.
+
+---
+
+## ✅ Padded (33): the table
+
+With `ty = 0`:
 
 | lane `tx` | word index | bank |
 |---:|---:|---:|
@@ -1638,8 +1548,6 @@ $$\text{bank} = (tx \cdot 33 + ty) \bmod 32 = \big(tx \cdot \underbrace{(33 \bmo
 
 ---
 
-<style scoped>section{font-size:23px} table{font-size:19px}</style>
-
 ## 🍀 Why 33 — and why 32 is the unlucky number
 
 The requirement is just: **`width` coprime to 32**, i.e. `width` odd.
@@ -1648,6 +1556,10 @@ The requirement is just: **`width` coprime to 32**, i.e. `width` odd.
 `width = 32` is the **worst** case because `32 ≡ 0 (mod 32)`:
 - the row index **disappears** from the bank formula, so a column-strided
 access (all lanes in one column) collapses to a single bank.
+
+---
+
+## 🍀 Why 33: the cost
 
 `width = 33` is the **smallest** odd stride, so it wastes the least shared memory:
 
@@ -1751,24 +1663,15 @@ while stride > 0:
 
 ## 🔑 Two details that matter
 
-<div class="cols">
-<div class="card blue">
-
 ### `tid < stride`
 Not `tid % (2*stride) == 0`.
 
 **Contiguous** active lanes: whole warps go idle instead of diverging. Same answer, better warp efficiency.
 
-</div>
-<div class="card orange">
-
 ### The barrier is outside the `if`
 **Every** thread must arrive, including the ones doing nothing this round.
 
 Putting it inside the `if` is the classic **deadlock / undefined-behaviour** bug.
-
-</div>
-</div>
 
 ---
 
@@ -1888,7 +1791,6 @@ Name it, recognise it in papers; implement it as a bonus exercise.
 
 <!-- _class: lead -->
 
-
 # 📊 Occupancy
 
 ---
@@ -1950,37 +1852,26 @@ Spills (`local` bytes > 0) mean VRAM traffic you did not ask for.
 
 ---
 
-<style scoped>section{font-size:24px} table{font-size:18px} td,th{padding:3px 8px}</style>
-
 ## 🔍 Walkthrough: what limits occupancy on a T4?
 
 A T4 SM has three hard ceilings: **1,024 threads**, **64 KB shared memory**, and **65,536 registers**.
 Suppose we launch blocks of **256 threads** (8 warps per block; 4 blocks = 100% occupancy):
 
-| Kernel profile | Shared / block | Regs / thread | Regs / block | Bottleneck resource | Max blocks / SM | Achieved occupancy |
-|---|---:|---:|---:|---|---:|---:|
-| **A: Light** | 2 KB | 32 | 8,192 | **Threads** (4 × 256 = 1,024) | **4** | **100%** (32/32 warps) |
-| **B: Shared-heavy** | 24 KB | 32 | 8,192 | **Shared mem** (2 × 24 KB = 48 KB) | **2** | **50%** (16/32 warps) |
-| **C: Register-heavy** | 2 KB | 96 | 24,576 | **Registers** (2 × 24,576 = 49,152) | **2** | **50%** (16/32 warps) |
+| Kernel profile | Shared / block | Regs / thread | Bottleneck resource | Max blocks / SM | Achieved occupancy |
+|---|---:|---:|---|---:|---:|
+| **A: Light** | 2 KB | 32 | **Threads** (4 × 256 = 1,024) | **4** | **100%** (32/32 warps) |
+| **B: Shared-heavy** | 24 KB | 32 | **Shared mem** (2 × 24 KB = 48 KB) | **2** | **50%** (16/32 warps) |
+| **C: Register-heavy** | 2 KB | 96 | **Registers** (2 × 24,576 = 49,152) | **2** | **50%** (16/32 warps) |
 
 ---
 
 ## 🔍 Why no third block fits
 
-<div class="cols">
-<div class="card orange">
-
 ### Case B: shared-heavy
 A 3rd block needs **72 KB**, more than the **64 KB** limit.
 
-</div>
-<div class="card red">
-
 ### Case C: register-heavy
 A 3rd block needs **73,728 registers**, more than the **65,536** limit.
-
-</div>
-</div>
 
 💡 **Takeaway:** whichever resource hits its SM ceiling **first** caps the number of resident warps.
 
@@ -2156,28 +2047,16 @@ Week 5's lesson again: *overlap communication with computation.*
 
 ## 🌊 Three requirements for overlap
 
-<div class="cols3">
-<div class="card green">
-
 ### 📌 Pinned host memory
 `cuda.pinned_array(n, dtype)` or `with cuda.pinned(a, b):`
 
 Copies from pageable memory are staged and **cannot overlap**.
 
-</div>
-<div class="card blue">
-
 ### 🛤️ Async copies in a stream
 Pass `stream=s`. A plain `to_device` **waits**.
 
-</div>
-<div class="card orange">
-
 ### 🧩 Independent chunks
 Chunk *k*'s result must **not be needed** by chunk *k+1*.
-
-</div>
-</div>
 
 Also: the kernel needs **enough work** (a kernel that is 1 % of the time leaves nothing to hide). Pinned memory is scarce: **pin what you stream**, not everything.
 
@@ -2204,12 +2083,9 @@ cuda.synchronize()                               # all streams
 
 ---
 
-<style scoped>section{font-size:23px} pre{font-size:15px;line-height:1.15}</style>
-
 ## 🏭 Walkthrough: how 3 streams overlap on hardware
 
-The Python `for` loop queues commands **instantly** (asynchronously).
-The GPU routes them to **three independent hardware engines**:
+The `for` loop queues commands **instantly**; the GPU routes them to **three independent engines**:
 
 ```text
 Time →        t1           t2           t3           t4           t5
@@ -2224,9 +2100,9 @@ D2H Copy                            │ Chunk 0 │  │ Chunk 1 │  │ Chunk 
                                     └─────────┘  └─────────┘  └─────────┘
 ```
 
-- **Inside one stream (e.g., Chunk 0):** `H2D → Compute → D2H` runs strictly in order.
-- **Across streams at `t3`:** All three hardware engines work in parallel (`D2H 0`, `Compute 1`, `H2D 2`).
-- **Without pinned memory:** The `H2D` engine stalls waiting on the CPU, collapsing the staircase back into serial execution.
+- **One stream:** `H2D → Compute → D2H` runs in order.
+- **At `t3`:** `D2H 0`, `Compute 1` and `H2D 2` run together.
+- **Without pinned memory** the staircase collapses into serial execution.
 
 ---
 
@@ -2284,20 +2160,11 @@ out of 320, and ______ GFLOP/s out of 8,100."*
 
 What if the dimensions $(M \times K)$ and $(K \times N)$ are **not** multiples of T? Two rules prevent deadlocks and garbage math:
 
-<div class="cols">
-<div class="card green">
-
 ### 0️⃣ Pad loads with `0.0`
 Pad out-of-bounds loads with **`0.0`**. Never leave shared memory uninitialized.
 
-</div>
-<div class="card blue">
-
 ### 🚧 Barriers stay outside `if`
 Keep `cuda.syncthreads()` **outside any `if` block**.
-
-</div>
-</div>
 
 ---
 
