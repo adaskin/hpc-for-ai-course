@@ -191,7 +191,6 @@ d_ary.copy_to_host(ary)
 
 ---
 
-<!-- _footer: "Schedule note: original syllabus Week 8 topic, taught in Week 9." -->
 
 ## 🗺️ Where we are
 
@@ -457,7 +456,7 @@ Every SM is an independent mini-processor with its own compute units and **on-ch
 
 ![w:860](img/w09-coalesced-memory-access.png)
 
-<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" -->
+
 
 **A simple coalesced kernel** (C = A + B vector addition):
 ```python
@@ -467,6 +466,8 @@ def vecadd(A, B, C):
     C[work_index] = A[work_index] + B[work_index]
 ```
 - simple coalesced access
+
+> "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html"
 
 ---
 
@@ -543,7 +544,7 @@ Several threads of a warp access the **same shared-memory location**:
 - **Middle:** linear addressing with a stride of two 32-bit words (**two-way** bank conflict).
 - **Right:** linear addressing with a stride of three 32-bit words (**no** bank conflict).
 
-<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" -->
+> "Figure: NVIDIA CUDA Programming Guide, Writing CUDA kernels: https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/writing-cuda-kernels.html" 
 
 ---
 
@@ -650,7 +651,7 @@ T4: 8,100 GFLOP/s ÷ 320 GB/s ≈ **25 FLOP/byte** — the *ridge point*.
 
 **Tile space:** conceptually partitioning an array into equally sized, non-overlapping tiles.
 
-<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" -->
+> "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" 
 
 ---
 
@@ -660,7 +661,7 @@ T4: 8,100 GFLOP/s ÷ 320 GB/s ≈ **25 FLOP/byte** — the *ridge point*.
 
 A two-dimensional array of shape (M, N). If a load operation specifies a tile shape of (tm, tn), the array is conceptually divided into rows and columns of tiles.
 
-<!-- _footer: "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" -->
+> "Figure: NVIDIA CUDA Programming Guide, Programming Model: https://docs.nvidia.com/cuda/cuda-programming-guide/01-introduction/programming-model.html" 
 
 ---
 
@@ -2127,7 +2128,7 @@ python 10_streams_overlap.py --iters 1        # a light kernel: nothing to hide
 
 ---
 
-<!-- _footer: "Lab notebook: week09/lab_week09_memory_hierarchy.ipynb" -->
+>  "Lab notebook: week09/lab_week09_memory_hierarchy.ipynb" 
 
 ## 🧪 Lab: six experiments, one story
 

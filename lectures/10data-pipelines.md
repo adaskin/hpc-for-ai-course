@@ -14,12 +14,11 @@ style: |
   code { font-size: 22px; }
   pre { font-size: 19px; }
   img:not(.emoji) { display: block; margin: 0 auto; }   /* emoji images stay inline */
-  footer { font-size: 16px; opacity: 0.5; }
+  footer { font-size: 16px; opacity: 0.1; }
 ---
 
 <!-- _class: lead -->
 <!-- _paginate: false -->
-<!-- _footer: "Schedule note: original syllabus Week 9 topic, taught in Week 10." -->
 
 # YZM 513 – High-Performance Programming for AI
 
@@ -97,7 +96,7 @@ The GPU cannot start a step until **its batch has arrived**.
 
 ![w:900](img/w10-idle-gpu.svg)
 
-<!-- _footer: "Schematic: block widths are illustrative (30 ms of data work, 50 ms of GPU work)." -->
+> "Schematic: block widths are illustrative (30 ms of data work, 50 ms of GPU work)." 
 
 ---
 
@@ -114,7 +113,7 @@ If the loader needs **more** than the GPU (say 80 ms vs 50 ms), the job is **inp
 - **Overlap** loading with compute
 - **Shrink** the loading work itself
 
-<!-- _footer: "Try it: python week10/01_cost_model.py --t-data 80 --t-gpu 50" -->
+> "Try it: python week10/01_cost_model.py --t-data 80 --t-gpu 50" 
 
 ---
 
@@ -150,7 +149,7 @@ class SyntheticDataset(Dataset):
 
 Same training loop for every step. 🔒 **Correctness first:** the script checks every step saw **the same data** as the baseline.
 
-<!-- _footer: "Full code: week10/pipeline_utils.py (dataset, loop, timing) · week10/02_ladder.py (the whole ladder)" -->
+>  "Full code: week10/pipeline_utils.py (dataset, loop, timing) · week10/02_ladder.py (the whole ladder)" 
 
 ---
 
@@ -168,7 +167,7 @@ The **main process** does everything, one after the other:
 - The profiler would show the GPU idle most of the time
 - This is the number every other step is compared with
 
-<!-- _footer: "The default num_workers=0 means loading is synchronous and done in the main process (PyTorch Performance Tuning Guide)." -->
+> "The default num_workers=0 means loading is synchronous and done in the main process (PyTorch Performance Tuning Guide)." 
 
 ---
 
@@ -186,7 +185,7 @@ loader = DataLoader(dataset, batch_size=32, num_workers=4)
 
 **How many?** About *(samples/s the GPU eats) ÷ (samples/s one worker makes)*. More workers than **cores** will not help: check `os.cpu_count()`.
 
-<!-- _footer: "Worker sizing: week10/01_cost_model.py" -->
+> "Worker sizing: week10/01_cost_model.py" 
 
 ---
 
@@ -222,7 +221,7 @@ loader = DataLoader(dataset, batch_size=32, num_workers=4,
 
 ![w:860](img/w10-overlap.svg)
 
-<!-- _footer: "Week 9 streams, applied to the input batch. Official guide: A guide on good usage of non_blocking and pin_memory()." -->
+> "Week 9 streams, applied to the input batch. Official guide: A guide on good usage of non_blocking and pin_memory()." 
 
 ---
 
@@ -248,7 +247,7 @@ class CudaPrefetcher:
         return batch
 ```
 
-<!-- _footer: "Full version (end of data, record_stream): week10/pipeline_utils.py" -->
+> "Full version (end of data, record_stream): week10/pipeline_utils.py" 
 
 ---
 
@@ -269,7 +268,7 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 
 🔁 **Week 2 again:** vectorise. One big operation beats 32 small ones.
 
-<!-- _footer: "collate_fn=passthrough because the batch is already built (a module-level function, so workers can pickle it). Full code: week10/pipeline_utils.py" -->
+>  "collate_fn=passthrough because the batch is already built (a module-level function, so workers can pickle it). Full code: week10/pipeline_utils.py" 
 
 ---
 
@@ -285,7 +284,7 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 
 💡 Some rungs give **nothing**. A knob helps only if it hits the **actual bottleneck**.
 
-<!-- _footer: "Speedups as reported by the official tutorial (its hardware is not stated; page figures should be re-checked). Your numbers will differ: the shape matters." -->
+> "Speedups as reported by the official tutorial. Your numbers will differ: the shape matters." 
 
 ---
 
@@ -309,14 +308,15 @@ loader = DataLoader(ds, batch_size=32, num_workers=4, collate_fn=passthrough)
 - ❌ `pin_memory=True` + `non_blocking=True` on the default stream is **not** overlap
 - ❌ `x.pin_memory().to(dev, non_blocking=True)` by hand can be **up to 2× slower** than a plain `.to(dev)`: `pin_memory()` blocks the host. Let the DataLoader pin.
 
-<!-- _footer: "Official guide measures 0.375 ms for pageable.to(cuda) and 0.428 ms for pageable.pin_memory().to(cuda) on one 1M-float tensor." -->
+> "Official guide measures 0.375 ms for pageable.to(cuda) and 0.428 ms for pageable.pin_memory().to(cuda) on one 1M-float tensor." 
 
 ---
-<!-- _footer: "Schematic of the four profiler traces in the official guide: pytorch.org/tutorials/intermediate/pinmem_nonblock.html" -->
 
 ## 🔬 Four cases, one winner
 
 ![h:500](img/w10-four-cases.svg)
+
+> "Schematic of the four profiler traces in the official guide: pytorch.org/tutorials/intermediate/pinmem_nonblock.html" 
 
 ---
 
@@ -341,7 +341,7 @@ Rules:
 - never change a pinned source while a copy may be pending
 - synchronise before you read a `non_blocking` result on the CPU
 
-<!-- _footer: "Demo with real failures on a GPU: week10/03_pinned_transfer.py (the official guide's tests failed at iterations 2 and 0)." -->
+> "Demo with real failures on a GPU: week10/03_pinned_transfer.py." 
 
 ---
 
@@ -385,7 +385,7 @@ if step % 50 == 0:
 
 The official tutorial's loop calls `loss.item()` every batch: fine for a tutorial, but **measure** it in your own loop.
 
-<!-- _footer: "PyTorch Performance Tuning Guide: avoid operations that require synchronisation. Demo: week10/04_hidden_syncs.py (on a GPU)." -->
+> "PyTorch Performance Tuning Guide: avoid operations that require synchronisation. Demo: week10/04_hidden_syncs.py (on a GPU)." 
 
 ---
 
@@ -404,7 +404,7 @@ data_wait += t1 - t0;  step_time += t2 - t1
 - **Do not** synchronise before `t1`: that adds the previous step's GPU work to the data wait
 - The sync before `t0` serialises CPU and GPU a little, so **the trace is the unperturbed view**
 
-<!-- _footer: "Full loop: run_epochs() in week10/pipeline_utils.py" -->
+> "Full loop: run_epochs() in week10/pipeline_utils.py" 
 
 ---
 
@@ -428,7 +428,7 @@ prof.export_chrome_trace("week10_trace.json")      # open at ui.perfetto.dev
 
 👀 Look for long **`data_wait`** blocks and **gaps** in the GPU row.
 
-<!-- _footer: "Official recipe: PyTorch Profiler. Full script: week10/05_profile_pipeline.py (also runs on CPU)." -->
+> "Official recipe: PyTorch Profiler. Full script: week10/05_profile_pipeline.py (also runs on CPU)." 
 
 ---
 
@@ -488,7 +488,7 @@ See each project's own documentation when you need them.
 
 > 📏 The names change. **Measure the wait first** still applies.
 
-<!-- _footer: "Official guide: Better performance with the tf.data API (tensorflow.org/guide/data_performance)" -->
+>  "Official guide: Better performance with the tf.data API (tensorflow.org/guide/data_performance)" 
 
 ---
 
@@ -508,7 +508,7 @@ dataset = (
 
 The tf.data guide draws the same picture as our idle-GPU figure: without `prefetch` the consumer waits for the producer.
 
-<!-- _footer: "Each call is shown on the guide's page; this chain is our combination of them. Guide's toy benchmark: sequential map 0.517 s, parallel map 0.395 s." -->
+> "Each call is shown on the guide's page; this chain is our combination of them. Guide's toy benchmark: sequential map 0.517 s, parallel map 0.395 s." 
 
 ---
 
@@ -525,7 +525,7 @@ dataset = (
 
 **Grain** is a data-loading library for JAX; its tutorial prefetches with Python threads (`ReadOptions(num_threads=16, prefetch_buffer_size=500)`).
 
-<!-- _footer: "Docs: google-grain.readthedocs.io (basic tutorial)" -->
+> "Docs: google-grain.readthedocs.io (basic tutorial)" 
 
 ---
 
@@ -541,7 +541,7 @@ dataloader = DataLoader(
 
 Hugging Face datasets **plug into the `DataLoader` you know**; `streaming=True` reads without a full download.
 
-<!-- _footer: "Docs: huggingface.co/docs/datasets (use_with_pytorch, stream)" -->
+> "Docs: huggingface.co/docs/datasets (use_with_pytorch, stream)" 
 
 ---
 
@@ -563,7 +563,7 @@ def simple_pipeline():
 
 🔌 It plugs into PyTorch, TensorFlow and JAX.
 
-<!-- _footer: "Example adapted from DALI's 'Pipeline mode' page: docs.nvidia.com/deeplearning/dali/user-guide/docs/" -->
+>  "Example adapted from DALI's 'Pipeline mode' page: docs.nvidia.com/deeplearning/dali/user-guide/docs/" 
 
 ---
 
@@ -578,29 +578,10 @@ ds = ds.shard(num_shards=jax.process_count(),
 
 🔁 PyTorch does the same job with `DistributedSampler` (DDP, Weeks 11–12).
 
-<!-- _footer: "JAX docs: Distributed data loading (docs.jax.dev, 501/data-loading)" -->
+> "JAX docs: Distributed data loading (docs.jax.dev, 501/data-loading)" 
 
 ---
 
-## 🎓 Project 2: proposals are due this week
-
-One page, with:
-
-| Item | Example |
-|---|---|
-| **System** | Qwen2.5-0.5B-Instruct with `transformers` |
-| **Workload** | 200 prompts, 256 generated tokens each |
-| **Hardware** | Colab T4, PyTorch 2.x |
-| **Baseline** | fp16, batch size 1, eager mode |
-| **Question** | How do batch size and `torch.compile` change throughput? |
-| **Interventions** (≥ 2) | batch sizes 1–16, `torch.compile`, both |
-| **Metrics** | tokens/s, p95 latency, peak memory, GPU utilisation |
-
-📌 Track A groups: say which **pipeline measurements** you will take.
-
-<!-- _footer: "Full brief: projects/project2-hardware-aware-ai/project2_hardware-aware-ai.md" -->
-
----
 
 <!-- _class: lead -->
 
@@ -608,7 +589,7 @@ One page, with:
 
 ---
 
-<!-- _footer: "Scripts in week10/ · run 02_ladder.py first. Works on Colab (T4) and on a laptop; GPU-only rungs are skipped on CPU." -->
+> "Scripts in week10/ · run 02_ladder.py first. Works on Colab (T4) and on a laptop; GPU-only rungs are skipped on CPU." 
 
 ## 🧪 Lab: your GPU is idle. Find out why and fix it
 
