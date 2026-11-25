@@ -51,7 +51,7 @@ Week 13     deployment                    torch.compile
 
 ---
 
-## 🔁 Last week in one minute
+## 🔁 Last week 
 
 | Last week | Today |
 |---|---|
@@ -60,6 +60,102 @@ Week 13     deployment                    torch.compile
 | 🌊 **Overlap:** streams and pinned memory hide copies behind compute | the same trick, for the input batch |
 | 📈 **The timeline:** gaps between kernels mean an **idle GPU** | why are there gaps, and how do we close them? |
 
+---
+
+## Memory read review
+### Global memory (VRAM): 32 lanes → 32-byte sectors → 128-byte cache line
+**✅ Coalesced: lanes read consecutive floats**
+```
+Lane:      0      1      2      3    ...   31
+Address:   0      4      8     12    ...  124    (byte offsets, 4 B each)
+           │      │      │      │           │
+           ▼      ▼      ▼      ▼           ▼
+        ┌──────────────────────────────────────┐
+        │         ONE 128-byte cache line       │
+        ├────────┬────────┬────────┬───────────┤
+        │sector 0│sector 1│sector 2│ sector 3  │
+        │ 32 B   │ 32 B   │ 32 B   │  32 B     │
+        │bytes   │bytes   │bytes   │  bytes    │
+        │ 0–31   │32–63   │64–95   │ 96–127    │
+        └────────┴────────┴────────┴───────────┘
+        4 sectors × 32 B = 128 B fetched
+        128 B useful                     → 1 transaction  ✅
+
+```
+---
+
+**❌ Strided: lanes read floats far apart**
+```
+Lane:      0       1       2     ...    31
+Address:   0    1024    2048    ...   (each 4 KB apart)
+
+           ▼       ▼       ▼              ▼
+        ┌───────┬───────┬───────┬─────┬───────┐
+        │sect 0 │sect 1 │sect 2 │ ... │sect 31│  ← 32 different sectors
+        │4 B used│4 B used│4 B used│   │4 B used│
+        └───────┴───────┴───────┴─────┴───────┘
+        32 sectors × 32 B = 1024 B fetched
+        128 B useful                     → 8× waste  ❌
+```
+Rule: consecutive lanes → consecutive bytes. Otherwise you pay for sectors you don't use.
+
+---
+
+### Shared memory (SRAM): 32 lanes → 32 banks → 4 bytes per bank per cycle
+Shared memory is a wall of 32 banks, each 4 bytes wide, each serving one word per cycle.
+```
+        Bank:   0     1     2     3    ...   31
+              ┌─────┬─────┬─────┬─────┬─────┬─────┐
+   word 0  →  │ [0] │ [1] │ [2] │ [3] │ ... │[31] │
+   word 1  →  │[32] │[33] │[34] │[35] │ ... │[63] │
+   word 2  →  │[64] │[65] │[66] │[67] │ ... │[95] │
+              └─────┴─────┴─────┴─────┴─────┴─────┘
+               4 B   4 B   4 B   4 B         4 B
+              word w lives in bank (w mod 32)
+```
+---
+
+**✅ 32 lanes → 32 distinct banks (1 cycle)**
+```
+Lane:   0    1    2    3   ...  31
+Word:  [0]  [1]  [2]  [3]  ... [31]
+Bank:   0    1    2    3   ...  31      ← every lane a different bank
+                                          → 1 cycle  ✅
+```
+
+---
+
+**✅ All 32 lanes read the same word → broadcast (1 cycle)**
+```
+Lane:   0    1    2    3   ...  31
+Word:  [5]  [5]  [5]  [5]  ... [5]
+Bank:   0    0    0    0   ...   0      ← all hit bank 0, SAME word
+                                          → broadcast, 1 cycle  ✅
+```
+---
+
+**❌ 32 lanes → same bank, different words (32 cycles)**
+
+```
+Lane:   0     1     2     3   ...  31
+Word:  [5]  [37]  [69] [101] ... [5+32·31]
+Bank:   0     0     0     0   ...   0   ← all hit bank 0, DIFFERENT words
+                                          → serialized: 32 cycles  ❌
+```
+Rule: different banks → free. Same bank + same word → free (broadcast). Same bank + different words → pay one cycle per lane.
+
+---
+
+```
+GLOBAL                              SHARED
+──────                              ──────
+unit  = 32-byte sector              unit  = 4-byte bank word (×32 banks)
+free  = lanes → consecutive bytes   free  = lanes → distinct banks
+                                    free  = all lanes → same word (broadcast)
+bad   = lanes → far apart (1 sector bad   = lanes → same bank, different words
+        per lane, 8× waste)                 (N-way serialized)
+fix   = thread map / AoS → SoA      fix   = pad stride 32 → 33
+```
 ---
 
 ## 🧠 PyTorch in one slide (if you are new to it)
